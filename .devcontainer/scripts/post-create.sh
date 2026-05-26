@@ -37,6 +37,7 @@ copy_if_missing() {
     return
   fi
   cp "$src" "$dst"
+  sed -i 's/\r//' "$dst"
   echo "Created $dst from $src"
 }
 
@@ -54,6 +55,7 @@ copy_env_with_docker_hostnames() {
   fi
   cp "$src" "$dst"
   sed -i \
+    -e 's/\r//' \
     -e 's|@localhost:5432|@postgres:5432|g' \
     -e 's|@localhost:6379|@redis:6379|g' \
     -e 's|^MINIO_ENDPOINT=localhost:9000|MINIO_ENDPOINT=minio:9000|' \
@@ -100,6 +102,10 @@ copy_if_missing "$UI_ENV_EXAMPLE" "$UI_ENV_FILE"
 step_done
 
 step "Switching pipecat to editable install from workspace"
+# The workspace and pipecat submodule are bind-mounted from Windows; git
+# sees a UID mismatch and refuses to run. Mark them safe before installing.
+git config --global --add safe.directory "$ROOT_DIR"
+git config --global --add safe.directory "$ROOT_DIR/pipecat"
 # pipecat's deps are already in the seeded venv as a frozen snapshot from
 # the build context. Re-register editable from the bind-mounted workspace
 # so source edits take effect. --no-deps skips re-resolving transitive

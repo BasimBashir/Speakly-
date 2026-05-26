@@ -185,13 +185,14 @@ for i in "${!SERVICE_NAMES[@]}"; do
     cd "$BASE_DIR"
     if [[ "$LOG_TO_FILE" == "true" ]]; then
       export LOG_FILE_PATH="$LOG_DIR/$name.log"
-      exec $cmd >>"$LOG_DIR/$name.log" 2>&1
+      exec nohup $cmd >>"$LOG_DIR/$name.log" 2>&1
     else
-      exec $cmd
+      exec nohup $cmd
     fi
   ) &
 
   pid=$!
+  disown $pid
   echo $pid >"$RUN_DIR/$name.pid"
   echo "  Started with PID $pid"
 

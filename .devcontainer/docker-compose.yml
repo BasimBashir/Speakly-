@@ -19,6 +19,9 @@ services:
     init: true
     networks:
       - app-network
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - .:/workspaces/dograh:cached
       - dograh-venv:/workspaces/dograh/venv

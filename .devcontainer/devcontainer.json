@@ -24,6 +24,8 @@
   "postCreateCommand": "bash .devcontainer/scripts/post-create.sh",
   "postStartCommand": "bash .devcontainer/scripts/post-start.sh",
   "forwardPorts": [
+    8000,
+    3000,
     5432,
     6379,
     9000,
