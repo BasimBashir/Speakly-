@@ -1,6 +1,8 @@
-# Dograh AI
+# Speakly
 
 **The open-source, self-hostable alternative to Vapi & Retell** — build production voice agents with a drag-and-drop workflow builder. From zero to a working bot in under 2 minutes.
+
+> Built on top of [Dograh](https://github.com/dograh-hq/dograh) open-source voice AI platform.
 
 <p align="center">
   <a href="https://app.dograh.com">

@@ -412,9 +412,9 @@ export default function UsagePage() {
                 {/* MPS Credits Card */}
                 <Card className="mb-6">
                     <CardHeader>
-                        <CardTitle>Dograh Model Credits</CardTitle>
+                        <CardTitle>Speakly Model Credits</CardTitle>
                         <CardDescription>
-                            These track usage of Dograh models using Dograh Service Keys.
+                            These track usage of Speakly models using Speakly Service Keys.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -444,7 +444,7 @@ export default function UsagePage() {
                                 )}
                             </div>
                         ) : (
-                            <p className="text-muted-foreground">No Dograh service keys configured. Set up a service key in your model configuration to see usage.</p>
+                            <p className="text-muted-foreground">No Speakly service keys configured. Set up a service key in your model configuration to see usage.</p>
                         )}
                     </CardContent>
                 </Card>
@@ -580,7 +580,7 @@ export default function UsagePage() {
                                     <div className="mt-4 p-3 bg-muted rounded-md">
                                         <p className="text-sm text-muted-foreground">
                                             Total for filtered period: <span className="font-semibold text-foreground">
-                                                {usageHistory.total_dograh_tokens.toLocaleString()} Dograh Tokens
+                                                {usageHistory.total_dograh_tokens.toLocaleString()} Speakly Tokens
                                             </span>
                                             {' • '}
                                             <span className="font-semibold text-foreground">

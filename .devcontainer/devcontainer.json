@@ -1,5 +1,5 @@
 {
-  "name": "Dograh",
+  "name": "Speakly",
   "dockerComposeFile": [
     "../docker-compose-local.yaml",
     "docker-compose.yml"
