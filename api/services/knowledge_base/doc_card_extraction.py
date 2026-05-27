@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from opentelemetry import trace
 
 from api.db import db_client
+from pipecat.processors.aggregators.llm_context import LLMContext
+
 from api.schemas.doc_card import DocCard
 from api.services.gen_ai.json_parser import parse_llm_json
 from api.services.knowledge_base.extraction_input import build_extraction_input
@@ -185,14 +187,9 @@ def _build_repair_prompt(error: Exception) -> str:
 async def _call_and_validate(
     llm, user_prompt: str, *, repair_allowed: bool
 ) -> DocCard:
-    response = await llm.create_chat_completion(
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
-    raw = response.choices[0].message.content if response.choices else ""
+    context = LLMContext()
+    context.set_messages([{"role": "user", "content": user_prompt}])
+    raw = await llm.run_inference(context, system_instruction=SYSTEM_PROMPT) or ""
     try:
         parsed = parse_llm_json(raw)
         return DocCard.model_validate(parsed)
