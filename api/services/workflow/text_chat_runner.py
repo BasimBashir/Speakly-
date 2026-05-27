@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -50,7 +51,12 @@ from api.services.workflow.pipecat_engine import PipecatEngine
 from api.services.workflow.workflow_graph import WorkflowGraph
 
 TEXT_CHAT_CHECKPOINT_VERSION = 1
-TEXT_CHAT_TURN_TIMEOUT_SECONDS = 60.0
+# 180s gives headroom for local-LLM setups where a single turn may make
+# multiple LLM round-trips (e.g. tool call -> KB retrieval -> answer
+# generation) on smaller models. Override per-deploy via env var if needed.
+TEXT_CHAT_TURN_TIMEOUT_SECONDS = float(
+    os.environ.get("TEXT_CHAT_TURN_TIMEOUT_SECONDS", "180")
+)
 TEXT_CHAT_IDLE_SETTLE_SECONDS = 0.2
 TEXT_CHAT_INTERNAL_CANCEL_REASON = "text_chat_turn_complete"
 

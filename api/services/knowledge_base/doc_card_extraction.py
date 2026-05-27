@@ -227,7 +227,7 @@ async def _resolve_extraction_llm(
     kwargs: dict = {}
     if provider == "azure":
         kwargs["endpoint"] = llm_config.get("endpoint", "")
-    elif provider == "openrouter" and llm_config.get("base_url"):
+    elif provider in ("openrouter", "speaches") and llm_config.get("base_url"):
         kwargs["base_url"] = llm_config["base_url"]
 
     return provider, model, api_key, kwargs

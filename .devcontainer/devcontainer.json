@@ -9,7 +9,12 @@
     "workspace",
     "postgres",
     "redis",
-    "minio"
+    "minio",
+    "vllm",
+    "embeddings",
+    "kokoro",
+    "speaches",
+    "speaches-model-init"
   ],
   "workspaceFolder": "/workspaces/dograh",
   "shutdownAction": "stopCompose",

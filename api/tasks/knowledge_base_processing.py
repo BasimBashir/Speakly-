@@ -256,8 +256,14 @@ async def process_knowledge_base_document(
         )
 
     except Exception as e:
+        # Pass error message as positional arg (not interpolated into the
+        # format string) so loguru doesn't try to format literal `{key}`
+        # substrings that may appear in upstream exception payloads
+        # (e.g. OpenAI/TEI 422 errors that contain `{'message': ...}`).
         logger.error(
-            f"Error processing knowledge base document {document_id}: {e}",
+            "Error processing knowledge base document {}: {}",
+            document_id,
+            str(e),
             exc_info=True,
         )
         await db_client.update_document_status(

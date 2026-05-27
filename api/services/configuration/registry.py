@@ -1274,8 +1274,45 @@ class OpenRouterEmbeddingsConfiguration(BaseEmbeddingsConfiguration):
     )
 
 
+SPEACHES_EMBEDDING_MODELS = [
+    "BAAI/bge-m3",
+    "BAAI/bge-large-en-v1.5",
+    "nomic-ai/nomic-embed-text-v1.5",
+    "mixedbread-ai/mxbai-embed-large-v1",
+]
+
+
+@register_embeddings
+class SpeachesEmbeddingsConfiguration(BaseEmbeddingsConfiguration):
+    """Local OpenAI-compatible embeddings (TEI, Ollama, vLLM, etc.).
+
+    The pgvector column is 1024 dims, so the chosen model must produce
+    1024-dim vectors natively. BGE-M3 (default), BGE-large-en-v1.5,
+    mxbai-embed-large-v1, and e5-large-v2 all qualify.
+    """
+
+    model_config = SPEACHES_PROVIDER_MODEL_CONFIG
+    provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
+    model: str = Field(
+        default="BAAI/bge-m3",
+        description="Embedding model name as exposed by your local server (must produce 1024-dim vectors).",
+        json_schema_extra={
+            "examples": SPEACHES_EMBEDDING_MODELS,
+            "allow_custom_input": True,
+        },
+    )
+    base_url: str = Field(
+        default="http://embeddings:80/v1",
+        description="OpenAI-compatible embeddings endpoint (TEI, Ollama, vLLM, etc.).",
+    )
+
+
 EmbeddingsConfig = Annotated[
-    Union[OpenAIEmbeddingsConfiguration, OpenRouterEmbeddingsConfiguration],
+    Union[
+        OpenAIEmbeddingsConfiguration,
+        OpenRouterEmbeddingsConfiguration,
+        SpeachesEmbeddingsConfiguration,
+    ],
     Field(discriminator="provider"),
 ]
 

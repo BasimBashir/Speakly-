@@ -58,10 +58,195 @@ services:
     networks:
       - app-network
 
+  # ===========================================================================
+  # Local model stack (NVIDIA GPU required)
+  # ===========================================================================
+  # Requires:
+  #   - NVIDIA GPU with >=24 GB VRAM (tested on RTX 3090)
+  #   - NVIDIA Container Toolkit installed in WSL2 / host
+  #   - ~25 GB free disk for first-start model downloads (cached in hf_cache)
+  #
+  # If you don't have a GPU, comment out the four services below and dograh
+  # will continue to work using the cloud Dograh MPS by default.
+  #
+  # First-start model downloads (one-time per host):
+  #   - Qwen3-32B-AWQ:           ~20 GB (vllm)
+  #   - BGE-M3:                  ~2.3 GB (embeddings)
+  #   - Kokoro-82M:              ~330 MB (kokoro, baked into image)
+  #   - Whisper Large v3:        ~3 GB (speaches, lazy-loaded on first request)
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # LLM — vLLM serving Qwen3 32B AWQ with native tool calling
+  # ---------------------------------------------------------------------------
+  vllm:
+    image: vllm/vllm-openai:latest
+    command:
+      - --model
+      - Qwen/Qwen3-14B-AWQ
+      # awq_marlin is the optimized kernel for AWQ-quantized weights on Ampere+
+      # (3090 is Ampere). ~3-5x faster generation than plain awq. vLLM logs
+      # "Detected that the model can run with awq_marlin" — we listened.
+      - --quantization
+      - awq_marlin
+      # 0.65 utilization (~15.6 GB of 24 GB on 3090). Qwen3-14B-AWQ weights
+      # are 9.44 GiB; the rest is KV cache + CUDA graphs (~1 GiB) + vLLM
+      # profiling overhead. Leaves ~8 GB of VRAM for the other GPU services
+      # (TEI + Kokoro + Speaches ≈ 4 GB) plus OS/driver overhead.
+      #
+      # Qwen3-32B-AWQ would not fit with the other services on a 24 GB card
+      # — its 18.24 GB weights alone leave no KV cache room.
+      - --gpu-memory-utilization
+      - "0.65"
+      # 8K context is plenty for voice agent turns and DocCard extraction.
+      # 16K KV cache (2.5 GiB) was too tight on the remaining ~1.15 GiB.
+      - --max-model-len
+      - "8192"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --reasoning-parser
+      - qwen3
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 600s  # vLLM cold-load can take several minutes
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ipc: host
+    networks:
+      - app-network
+
+  # ---------------------------------------------------------------------------
+  # Embeddings — Hugging Face TEI serving BGE-M3 (multilingual)
+  # ---------------------------------------------------------------------------
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+    command:
+      - --model-id
+      - BAAI/bge-m3
+      - --max-batch-tokens
+      - "16384"
+    ports:
+      - "127.0.0.1:8002:80"
+    volumes:
+      - hf_cache:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+
+  # ---------------------------------------------------------------------------
+  # TTS — Kokoro-FastAPI (OpenAI /v1/audio/speech compatible)
+  # ---------------------------------------------------------------------------
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    ports:
+      - "127.0.0.1:8003:8880"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8880/v1/audio/voices"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+
+  # ---------------------------------------------------------------------------
+  # STT — Speaches (faster-whisper, OpenAI /v1/audio/transcriptions compatible)
+  # Uses its own HF cache volume (separate from hf_cache) because Speaches
+  # runs as user `ubuntu` while vLLM/TEI run as root, and they'd otherwise
+  # fight over directory ownership in a shared volume.
+  # ---------------------------------------------------------------------------
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    ports:
+      - "127.0.0.1:8004:8000"
+    volumes:
+      - speaches_cache:/home/ubuntu/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+
+  # ---------------------------------------------------------------------------
+  # One-shot bootstrap that asks Speaches to download the default Whisper
+  # model after Speaches is healthy. Without this, Speaches lazy-loads
+  # models on first transcribe request and voice calls fail with 404 the
+  # first time. Idempotent: if the model is already present, Speaches
+  # returns 200 quickly without re-downloading.
+  # ---------------------------------------------------------------------------
+  speaches-model-init:
+    image: curlimages/curl:latest
+    command:
+      - sh
+      - -c
+      - |
+        echo "Waiting for Speaches to become healthy..."
+        for i in $$(seq 1 60); do
+          if curl -sf http://speaches:8000/health > /dev/null 2>&1; then
+            echo "Speaches up. Pre-downloading Whisper model..."
+            curl -sS -X POST "http://speaches:8000/v1/models/Systran%2Ffaster-distil-whisper-large-v3"
+            echo ""
+            echo "Whisper model ready."
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "Speaches never became healthy; skipping model preload."
+        exit 0
+    restart: "no"
+    networks:
+      - app-network
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  hf_cache:
+  speaches_cache:
 
 networks:
   app-network:

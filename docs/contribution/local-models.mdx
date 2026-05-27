@@ -1,0 +1,201 @@
+---
+title: "Local Models (Self-Hosted)"
+description: "Run LLM, STT, TTS, and embeddings on your own GPU instead of the Dograh cloud."
+---
+
+import { Note, Warning, Tip, Steps, Step } from '/snippets/components.mdx'
+
+This guide describes how to run the entire AI stack locally on your own NVIDIA
+GPU. The four containers in `docker-compose-local.yaml` (`vllm`, `embeddings`,
+`kokoro`, `speaches`) expose OpenAI-compatible HTTP endpoints, so Dograh treats
+them like any other provider.
+
+## Hardware requirements
+
+- NVIDIA GPU with **at least 24 GB VRAM** (tested on RTX 3090).
+- ~25 GB free disk for first-time model downloads (cached in the `hf_cache`
+  Docker volume).
+- NVIDIA driver supporting CUDA 12.x.
+
+VRAM budget on a 24 GB card:
+
+| Service | Model | VRAM |
+|---|---|---|
+| vllm | Qwen3 14B AWQ (4-bit, 8K context) | ~15.6 GB |
+| embeddings | BGE-M3 | ~2 GB |
+| speaches | Distil-Whisper Large v3 | ~1.5 GB |
+| kokoro | Kokoro-82M | ~0.7 GB |
+| **Total** | | **~17 GB (comfortable)** |
+
+`--gpu-memory-utilization 0.65` on vLLM reserves ~15.6 GB; weights take 9.44 GB,
+CUDA graphs and profiling overhead take ~2 GB, and the rest is KV cache (~3 GB
+at 8K context). Leaves ~8 GB on the card for the other GPU services.
+
+**Why not Qwen3 32B?** The 32B model's weights alone are 18.24 GiB — combined
+with KV cache and the other 3 GPU services, it exceeds a 24 GB card. If you
+have a 32+ GB GPU, you can switch to `Qwen/Qwen3-32B-AWQ` with
+`--gpu-memory-utilization 0.7` and get higher tool-call accuracy. On a 3090,
+Qwen3 14B is the right balance.
+
+**Speed up first-time downloads** by setting a Hugging Face token before
+`devcontainer up`. Without a token, downloads are throttled — the Qwen3 32B
+download can take 45-60 minutes:
+
+```bash
+export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+```
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install NVIDIA Container Toolkit">
+    On Windows, this lives inside WSL2. Inside your WSL2 distro:
+    ```bash
+    distribution=$(. /etc/os-release; echo $ID$VERSION_ID) && \
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
+    curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list | \
+      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    sudo apt-get update
+    sudo apt-get install -y nvidia-container-toolkit
+    sudo nvidia-ctk runtime configure --runtime=docker
+    sudo systemctl restart docker
+    ```
+
+    On Linux hosts, just install the toolkit package directly (no WSL).
+  </Step>
+
+  <Step title="Verify GPU passthrough">
+    ```bash
+    docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+    ```
+    You should see your GPU listed. If you get "could not select device
+    driver", the toolkit isn't installed correctly.
+  </Step>
+
+  <Step title="(Optional) Set a Hugging Face token">
+    Most models are public, but a token avoids rate limits during the
+    first-start download. Add to your environment before `devcontainer up`:
+    ```bash
+    export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+    ```
+  </Step>
+</Steps>
+
+## First start
+
+All four GPU services start automatically with `devcontainer up` (they're
+in `.devcontainer/devcontainer.json`'s `runServices` list alongside
+postgres/redis/minio/workspace).
+
+```powershell
+devcontainer up --workspace-folder .
+```
+
+**First run downloads ~13 GB of weights and takes 15-30 minutes** depending
+on your connection. Everything auto-downloads on first start:
+
+- **vllm**: Qwen3-14B-AWQ pulled from HF Hub on container start.
+- **embeddings**: BGE-M3 pulled from HF Hub on container start.
+- **kokoro**: Model is baked into the image (no download).
+- **speaches**: Whisper model auto-downloaded by the `speaches-model-init`
+  one-shot container after Speaches becomes healthy. (Without this init
+  step, Speaches lazy-loads on first transcribe and voice calls 404.)
+
+vLLM is the slowest to start because of model load + CUDA graph compilation.
+Monitor progress:
+
+```powershell
+bash scripts/start_local_models.sh logs
+# or
+docker compose -f docker-compose-local.yaml --project-name dograh logs -f vllm
+```
+
+You'll see lines like `Avg prompt throughput`, `GPU KV cache usage`, then
+finally `Application startup complete.` Once `curl http://localhost:8001/v1/models`
+returns a JSON list, the LLM is ready.
+
+The other three services start in seconds.
+
+To stop the GPU stack later (frees ~21 GB VRAM):
+
+```powershell
+bash scripts/start_local_models.sh stop
+```
+
+## Wiring into Dograh
+
+Open **Models** in the sidebar and configure each provider. Use the
+container DNS names (Dograh reaches them over the docker network):
+
+| Component | UI Provider | base_url | model | api_key |
+|---|---|---|---|---|
+| **LLM** | Local Models (Speaches) | `http://vllm:8000/v1` | `Qwen/Qwen3-14B-AWQ` | `dummy` |
+| **Embedding** | OpenAI (custom base_url) | `http://embeddings:80/v1` | `BAAI/bge-m3` | `dummy` |
+| **TTS** | OpenAI (custom base_url) | `http://kokoro:8880/v1` | `kokoro` | `dummy` |
+| **STT** | Local Models (Speaches) | `http://speaches:8000/v1` | `Systran/faster-distil-whisper-large-v3` | `dummy` |
+
+<Note>
+The `api_key` value is required by the OpenAI SDK shape but ignored by all four
+local servers. Any non-empty string works.
+</Note>
+
+## Verifying each service
+
+From inside the dograh workspace container:
+
+```bash
+# LLM — should return a JSON list with Qwen3
+curl http://vllm:8000/v1/models
+
+# Embedding — should return server info
+curl http://embeddings:80/info
+
+# TTS — should list voices baked into Kokoro
+curl http://kokoro:8880/v1/audio/voices
+
+# STT — should return supported models
+curl http://speaches:8000/v1/audio/models
+```
+
+To see GPU memory in use:
+
+```bash
+docker exec dograh-vllm-1 nvidia-smi
+```
+
+## Tuning
+
+### Lowering memory pressure
+
+If you see OOM errors:
+
+1. **vLLM utilization** — drop `--gpu-memory-utilization 0.62` to `0.55`.
+2. **Smaller LLM** — swap `Qwen3-32B-Instruct-AWQ` for `Qwen3-14B-Instruct-AWQ`.
+3. **Distil-Whisper** — Speaches will use whichever model the API request asks
+   for, so configure Dograh to use `Systran/faster-distil-whisper-large-v3`
+   (~1.5 GB) instead of the full Whisper Large v3.
+
+### Pre-downloading models
+
+If you want to avoid the first-start download time, pre-fetch into the volume:
+
+```bash
+# Pre-download Qwen3 32B AWQ
+docker run --rm -v dograh_hf_cache:/root/.cache/huggingface python:3.11-slim \
+  bash -c "pip install huggingface-hub && \
+           huggingface-cli download Qwen/Qwen3-14B-AWQ"
+```
+
+### Disabling the local stack
+
+To run Dograh against the cloud Dograh MPS again, just stop the four GPU
+services without removing them:
+
+```bash
+docker compose stop vllm embeddings kokoro speaches
+```
+
+Dograh will fall back to whichever provider is configured in **Models**. The
+container DNS names won't resolve, but as long as the UI isn't pointed at
+them, nothing breaks.
