@@ -161,5 +161,8 @@ async def test_extraction_org_isolation(db_session):
     ):
         await extract_doc_card_for_document(doc_a.id)
 
+    refreshed_a = await db_session.get_document_by_id(doc_a.id)
+    assert refreshed_a.doc_card is not None
+    assert refreshed_a.doc_card["title"] == "A"
     refreshed_b = await db_session.get_document_by_id(doc_b.id)
     assert refreshed_b.doc_card is None  # untouched
