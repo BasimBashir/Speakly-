@@ -82,7 +82,7 @@ echo.
 REM ---- Step 3/4 — UI (in its own window) ------------------------------------
 
 echo [STEP 3/4] Starting UI in a new window...
-start "Dograh UI" cmd /k "devcontainer exec --workspace-folder . bash -lc \"cd ui && npm run dev -- --hostname 0.0.0.0\""
+start "Dograh UI" cmd /k "devcontainer exec --workspace-folder . bash scripts/start_ui_dev.sh"
 echo [OK] UI launched.
 echo.
 
