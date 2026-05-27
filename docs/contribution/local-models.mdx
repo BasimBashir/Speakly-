@@ -21,18 +21,20 @@ VRAM budget on a 24 GB card:
 
 | Service | Model | VRAM |
 |---|---|---|
-| vllm | Qwen3 32B AWQ (4-bit, 8K context) | ~20 GB |
+| vllm | Qwen3 14B AWQ (4-bit, 16K context) | ~13 GB |
 | embeddings | BGE-M3 | ~2 GB |
 | speaches | Distil-Whisper Large v3 | ~1.5 GB |
 | kokoro | Kokoro-82M | ~0.7 GB |
-| **Total** | | **~24 GB (tight)** |
+| **Total** | | **~17 GB (comfortable)** |
 
-`--gpu-memory-utilization 0.85` on vLLM reserves ~20 GB; the model itself
-takes 18.24 GiB, leaving ~1.5 GB for KV cache (sufficient at `--max-model-len 8192`).
+`--gpu-memory-utilization 0.55` on vLLM reserves ~13 GB; weights take ~8 GB
+and the rest is KV cache. Leaves comfortable headroom for the other services.
 
-**If you OOM**, downgrade to `Qwen/Qwen3-14B-AWQ` (~8 GB) and lower utilization
-to `0.55`. That gives the other services plenty of headroom and still supports
-solid tool calling.
+**Why not Qwen3 32B?** The 32B model's weights alone are 18.24 GiB — combined
+with KV cache and the other 3 GPU services, it exceeds a 24 GB card. If you
+have a 32+ GB GPU, you can switch to `Qwen/Qwen3-32B-AWQ` with
+`--gpu-memory-utilization 0.7` and get higher tool-call accuracy. On a 3090,
+Qwen3 14B is the right balance.
 
 **Speed up first-time downloads** by setting a Hugging Face token before
 `devcontainer up`. Without a token, downloads are throttled — the Qwen3 32B
@@ -123,7 +125,7 @@ container DNS names (Dograh reaches them over the docker network):
 
 | Component | UI Provider | base_url | model | api_key |
 |---|---|---|---|---|
-| **LLM** | Local Models (Speaches) | `http://vllm:8000/v1` | `Qwen/Qwen3-32B-AWQ` | `dummy` |
+| **LLM** | Local Models (Speaches) | `http://vllm:8000/v1` | `Qwen/Qwen3-14B-AWQ` | `dummy` |
 | **Embedding** | OpenAI (custom base_url) | `http://embeddings:80/v1` | `BAAI/bge-m3` | `dummy` |
 | **TTS** | OpenAI (custom base_url) | `http://kokoro:8880/v1` | `kokoro` | `dummy` |
 | **STT** | Local Models (Speaches) | `http://speaches:8000/v1` | `Systran/faster-distil-whisper-large-v3` | `dummy` |
@@ -177,7 +179,7 @@ If you want to avoid the first-start download time, pre-fetch into the volume:
 # Pre-download Qwen3 32B AWQ
 docker run --rm -v dograh_hf_cache:/root/.cache/huggingface python:3.11-slim \
   bash -c "pip install huggingface-hub && \
-           huggingface-cli download Qwen/Qwen3-32B-AWQ"
+           huggingface-cli download Qwen/Qwen3-14B-AWQ"
 ```
 
 ### Disabling the local stack

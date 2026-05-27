@@ -83,18 +83,18 @@ services:
     image: vllm/vllm-openai:latest
     command:
       - --model
-      - Qwen/Qwen3-32B-AWQ
+      - Qwen/Qwen3-14B-AWQ
       - --quantization
       - awq
-      # 0.85 utilization (~20 GB of 24 GB on 3090). The model itself is
-      # 18.24 GiB; the rest is KV cache. Other GPU services (TEI, Kokoro,
-      # Speaches) share the remaining ~4 GB.
+      # 0.55 utilization (~13 GB of 24 GB on 3090). Qwen3-14B-AWQ is ~8 GB
+      # of weights; the rest is KV cache + CUDA graphs. Leaves ~11 GB of
+      # VRAM for the other GPU services (TEI + Kokoro + Speaches ≈ 4 GB)
+      # plus headroom. Qwen3-32B-AWQ would not fit with the other services
+      # on a 24 GB card — its 18.24 GB weights alone leave no KV cache room.
       - --gpu-memory-utilization
-      - "0.85"
-      # 8192 context is plenty for voice agent turns and DocCard extraction.
-      # 32K context's KV cache won't fit alongside the model on a 24 GB card.
+      - "0.55"
       - --max-model-len
-      - "8192"
+      - "16384"
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
