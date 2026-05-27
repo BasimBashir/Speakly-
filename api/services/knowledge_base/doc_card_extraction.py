@@ -13,11 +13,14 @@ from typing import Optional
 from loguru import logger
 from pydantic import ValidationError
 
+from opentelemetry import trace
+
 from api.db import db_client
 from api.schemas.doc_card import DocCard
 from api.services.gen_ai.json_parser import parse_llm_json
 from api.services.knowledge_base.extraction_input import build_extraction_input
 from api.services.pipecat.service_factory import create_llm_service_from_provider
+from api.services.pipecat.tracing_config import ensure_tracing
 
 EXTRACTION_BUDGET_CHARS = int(os.environ.get("KB_DOC_CARD_BUDGET_CHARS", "400000"))
 
@@ -111,15 +114,51 @@ async def extract_doc_card_for_document(document_id: int) -> Optional[DocCard]:
         document=extraction_input,
     )
 
-    llm = create_llm_service_from_provider(provider, model, api_key, **kwargs)
-
-    card = await _call_and_validate(llm, user_prompt, repair_allowed=True)
+    if ensure_tracing():
+        tracer = trace.get_tracer("knowledge_base")
+        with tracer.start_as_current_span("kb.doc_card_extraction") as span:
+            span.set_attribute("doc_id", document_id)
+            span.set_attribute("doc_type", document.doc_type or "other")
+            span.set_attribute("model_provider", provider)
+            span.set_attribute("model_id", model)
+            span.set_attribute(
+                "extraction_mode",
+                "full_text" if full_text else "stitched_sample",
+            )
+            span.set_attribute("input_chars", len(extraction_input))
+            llm = create_llm_service_from_provider(provider, model, api_key, **kwargs)
+            try:
+                card = await _call_and_validate(llm, user_prompt, repair_allowed=True)
+                span.set_attribute("final_status", "success")
+            except Exception as e:
+                span.set_attribute("final_status", "failed")
+                span.record_exception(e)
+                raise
+    else:
+        llm = create_llm_service_from_provider(provider, model, api_key, **kwargs)
+        card = await _call_and_validate(llm, user_prompt, repair_allowed=True)
 
     await db_client.update_doc_card(
         document_id=document_id,
         doc_card=card.model_dump(),
         topics=card.topics,
     )
+
+    from api.enums import PostHogEvent
+    from api.services.posthog_client import capture_event
+
+    capture_event(
+        distinct_id=str(document.created_by) if document.created_by else f"org_{document.organization_id}",
+        event=PostHogEvent.KNOWLEDGE_BASE_DOC_CARD_GENERATED,
+        properties={
+            "document_id": document.id,
+            "doc_type": document.doc_type,
+            "organization_id": document.organization_id,
+            "model_provider": provider,
+            "model_id": model,
+        },
+    )
+
     logger.info(f"DocCard extracted for document {document_id}")
     return card
 
