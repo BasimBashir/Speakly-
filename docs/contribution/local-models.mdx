@@ -70,12 +70,27 @@ for the other three services. If you have a smaller GPU, downgrade to
 
 ## First start
 
-`devcontainer up --workspace-folder .` brings all four GPU services up alongside
-postgres/redis/minio. **vLLM takes 5-10 minutes the first time** because it
-downloads ~20 GB and loads weights into GPU memory. Monitor progress with:
+The GPU services are **opt-in** — `devcontainer up` only starts the core
+infrastructure (postgres/redis/minio/workspace). Start the GPU stack
+separately from PowerShell on the host (not from inside the workspace):
 
-```bash
-docker compose logs -f vllm
+```powershell
+bash scripts/start_local_models.sh
+```
+
+Or directly:
+
+```powershell
+docker compose -f docker-compose-local.yaml --project-name dograh up -d vllm embeddings kokoro speaches
+```
+
+**vLLM takes 5-10 minutes the first time** because it downloads ~20 GB and
+loads weights into GPU memory. Monitor progress:
+
+```powershell
+bash scripts/start_local_models.sh logs
+# or
+docker compose -f docker-compose-local.yaml --project-name dograh logs -f vllm
 ```
 
 You'll see lines like `Avg prompt throughput`, `GPU KV cache usage`, then
@@ -83,6 +98,12 @@ finally `Application startup complete.` Once `curl http://localhost:8001/v1/mode
 returns a JSON list, the LLM is ready.
 
 The other three services start in seconds.
+
+To stop the GPU stack later (frees ~21 GB VRAM):
+
+```powershell
+bash scripts/start_local_models.sh stop
+```
 
 ## Wiring into Dograh
 
