@@ -84,22 +84,17 @@ export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
 
 ## First start
 
-The GPU services are **opt-in** — `devcontainer up` only starts the core
-infrastructure (postgres/redis/minio/workspace). Start the GPU stack
-separately from PowerShell on the host (not from inside the workspace):
+All four GPU services start automatically with `devcontainer up` (they're
+in `.devcontainer/devcontainer.json`'s `runServices` list alongside
+postgres/redis/minio/workspace).
 
 ```powershell
-bash scripts/start_local_models.sh
+devcontainer up --workspace-folder .
 ```
 
-Or directly:
-
-```powershell
-docker compose -f docker-compose-local.yaml --project-name dograh up -d vllm embeddings kokoro speaches
-```
-
-**vLLM takes 5-10 minutes the first time** because it downloads ~20 GB and
-loads weights into GPU memory. Monitor progress:
+**First run downloads ~10 GB of weights and takes 15-30 minutes** depending
+on your connection. vLLM is the slowest to start because of model load +
+CUDA graph compilation. Monitor progress:
 
 ```powershell
 bash scripts/start_local_models.sh logs
