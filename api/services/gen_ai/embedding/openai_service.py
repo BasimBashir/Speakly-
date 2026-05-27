@@ -1,8 +1,15 @@
-"""OpenAI embedding service.
+"""OpenAI-compatible embedding service.
 
 Embeds text and performs vector similarity search via the local database.
 Document conversion and chunking now live in the Model Proxy Service (MPS);
 this file no longer pulls docling/transformers.
+
+Works with any OpenAI-compatible embeddings endpoint: OpenAI proper,
+OpenRouter, and local servers (Hugging Face TEI, Ollama, vLLM, etc.).
+The pgvector column is fixed at 1024 dims (see DB migration
+a1b2c3d4e5f7_change_embedding_dim_to_1024); models that produce a
+different native dim are either truncated (OpenAI 3-small/large via
+Matryoshka `dimensions=1024`) or must be 1024 natively (BGE-M3, etc.).
 """
 
 from typing import Any, Dict, List, Optional
@@ -14,8 +21,20 @@ from api.db.db_client import DBClient
 
 from .base import BaseEmbeddingService
 
-DEFAULT_MODEL_ID = "text-embedding-3-small"
-EMBEDDING_DIMENSION = 1536  # Dimension for text-embedding-3-small
+# Fixed column dimension. To change, run a new DB migration and update here.
+EMBEDDING_DIMENSION = 1024
+
+# Default model — BGE-M3 (1024 native) for the local stack. Override per-org
+# via UserConfiguration.embeddings.model.
+DEFAULT_MODEL_ID = "BAAI/bge-m3"
+
+# OpenAI's text-embedding-3-* models support Matryoshka truncation via the
+# `dimensions` parameter. Any model whose key prefix matches an entry here
+# will be called with `dimensions=EMBEDDING_DIMENSION`.
+MATRYOSHKA_OPENAI_MODELS = (
+    "text-embedding-3-small",
+    "text-embedding-3-large",
+)
 
 
 class EmbeddingAPIKeyNotConfiguredError(Exception):
@@ -78,21 +97,27 @@ class OpenAIEmbeddingService(BaseEmbeddingService):
             raise EmbeddingAPIKeyNotConfiguredError()
 
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        """Embed a batch of texts using OpenAI API.
+        """Embed a batch of texts using the configured embeddings endpoint.
+
+        For OpenAI text-embedding-3-* models, the `dimensions` parameter
+        truncates the vector to EMBEDDING_DIMENSION via Matryoshka. Other
+        servers (TEI, Ollama, vLLM) ignore unknown kwargs or reject them, so
+        we only pass `dimensions` for known-compatible models.
 
         Raises:
             EmbeddingAPIKeyNotConfiguredError: If API key is not configured.
         """
         self._ensure_api_key_configured()
 
+        kwargs: Dict[str, Any] = {"input": texts, "model": self.model_id}
+        if self.model_id in MATRYOSHKA_OPENAI_MODELS:
+            kwargs["dimensions"] = EMBEDDING_DIMENSION
+
         try:
-            response = await self.client.embeddings.create(
-                input=texts,
-                model=self.model_id,
-            )
+            response = await self.client.embeddings.create(**kwargs)
             return [item.embedding for item in response.data]
         except Exception as e:
-            logger.error(f"Error generating OpenAI embeddings: {e}")
+            logger.error(f"Error generating embeddings: {e}")
             raise
 
     async def embed_query(self, query: str) -> List[float]:

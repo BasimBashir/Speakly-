@@ -1278,10 +1278,12 @@ class KnowledgeBaseChunkModel(Base):
     )  # e.g., 384 for all-MiniLM-L6-v2
 
     # Vector embedding (pgvector column)
-    # The dimension should match the embedding_dimension field
-    # Default: 1536 dimensions for OpenAI text-embedding-3-small
-    # SentenceTransformer (384-dim) also supported but stored as 384-dim vectors
-    embedding = Column(Vector(1536), nullable=True)
+    # Fixed at 1024 dims, the open-source community standard. Compatible with:
+    #   - BGE-M3, BGE-large-en-v1.5, mxbai-embed-large-v1, e5-large-v2 (all 1024)
+    #   - OpenAI text-embedding-3-small/large via Matryoshka `dimensions=1024`
+    # The embedding_dimension column tracks the actual dim used per chunk in
+    # case of future migration to multi-dim support.
+    embedding = Column(Vector(1024), nullable=True)
 
     # Token count (useful for chunking strategy analysis)
     token_count = Column(Integer, nullable=True)

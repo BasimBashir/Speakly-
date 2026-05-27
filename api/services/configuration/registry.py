@@ -1286,23 +1286,16 @@ SPEACHES_EMBEDDING_MODELS = [
 class SpeachesEmbeddingsConfiguration(BaseEmbeddingsConfiguration):
     """Local OpenAI-compatible embeddings (TEI, Ollama, vLLM, etc.).
 
-    WARNING: The pgvector column is currently fixed at 1536 dimensions
-    (matching OpenAI's text-embedding-3-small). Local models that produce
-    different dimensions (BGE-M3=1024, nomic-embed=768) will not work with
-    `chunked` retrieval mode without a DB schema migration. Use Full Document
-    retrieval mode with this provider, or stick with OpenAI for embeddings.
+    The pgvector column is 1024 dims, so the chosen model must produce
+    1024-dim vectors natively. BGE-M3 (default), BGE-large-en-v1.5,
+    mxbai-embed-large-v1, and e5-large-v2 all qualify.
     """
 
     model_config = SPEACHES_PROVIDER_MODEL_CONFIG
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
         default="BAAI/bge-m3",
-        description=(
-            "Embedding model name as exposed by your local server. "
-            "Note: must produce 1536-dim vectors to interop with the "
-            "pgvector column. Most local models do not — use Full Document "
-            "retrieval mode instead."
-        ),
+        description="Embedding model name as exposed by your local server (must produce 1024-dim vectors).",
         json_schema_extra={
             "examples": SPEACHES_EMBEDDING_MODELS,
             "allow_custom_input": True,
