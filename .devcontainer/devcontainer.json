@@ -13,7 +13,8 @@
     "vllm",
     "embeddings",
     "kokoro",
-    "speaches"
+    "speaches",
+    "speaches-model-init"
   ],
   "workspaceFolder": "/workspaces/dograh",
   "shutdownAction": "stopCompose",

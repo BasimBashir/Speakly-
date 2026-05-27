@@ -92,9 +92,18 @@ postgres/redis/minio/workspace).
 devcontainer up --workspace-folder .
 ```
 
-**First run downloads ~10 GB of weights and takes 15-30 minutes** depending
-on your connection. vLLM is the slowest to start because of model load +
-CUDA graph compilation. Monitor progress:
+**First run downloads ~13 GB of weights and takes 15-30 minutes** depending
+on your connection. Everything auto-downloads on first start:
+
+- **vllm**: Qwen3-14B-AWQ pulled from HF Hub on container start.
+- **embeddings**: BGE-M3 pulled from HF Hub on container start.
+- **kokoro**: Model is baked into the image (no download).
+- **speaches**: Whisper model auto-downloaded by the `speaches-model-init`
+  one-shot container after Speaches becomes healthy. (Without this init
+  step, Speaches lazy-loads on first transcribe and voice calls 404.)
+
+vLLM is the slowest to start because of model load + CUDA graph compilation.
+Monitor progress:
 
 ```powershell
 bash scripts/start_local_models.sh logs

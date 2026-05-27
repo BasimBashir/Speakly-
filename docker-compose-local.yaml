@@ -185,13 +185,16 @@ services:
 
   # ---------------------------------------------------------------------------
   # STT — Speaches (faster-whisper, OpenAI /v1/audio/transcriptions compatible)
+  # Uses its own HF cache volume (separate from hf_cache) because Speaches
+  # runs as user `ubuntu` while vLLM/TEI run as root, and they'd otherwise
+  # fight over directory ownership in a shared volume.
   # ---------------------------------------------------------------------------
   speaches:
     image: ghcr.io/speaches-ai/speaches:latest-cuda
     ports:
       - "127.0.0.1:8004:8000"
     volumes:
-      - hf_cache:/home/ubuntu/.cache/huggingface
+      - speaches_cache:/home/ubuntu/.cache/huggingface
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -208,11 +211,42 @@ services:
     networks:
       - app-network
 
+  # ---------------------------------------------------------------------------
+  # One-shot bootstrap that asks Speaches to download the default Whisper
+  # model after Speaches is healthy. Without this, Speaches lazy-loads
+  # models on first transcribe request and voice calls fail with 404 the
+  # first time. Idempotent: if the model is already present, Speaches
+  # returns 200 quickly without re-downloading.
+  # ---------------------------------------------------------------------------
+  speaches-model-init:
+    image: curlimages/curl:latest
+    command:
+      - sh
+      - -c
+      - |
+        echo "Waiting for Speaches to become healthy..."
+        for i in $$(seq 1 60); do
+          if curl -sf http://speaches:8000/health > /dev/null 2>&1; then
+            echo "Speaches up. Pre-downloading Whisper model..."
+            curl -sS -X POST "http://speaches:8000/v1/models/Systran%2Ffaster-distil-whisper-large-v3"
+            echo ""
+            echo "Whisper model ready."
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "Speaches never became healthy; skipping model preload."
+        exit 0
+    restart: "no"
+    networks:
+      - app-network
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   hf_cache:
+  speaches_cache:
 
 networks:
   app-network:
