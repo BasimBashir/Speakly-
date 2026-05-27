@@ -142,6 +142,24 @@ async def process_knowledge_base_document(
                 total_chunks=0,
                 docling_metadata=docling_metadata,
             )
+            # Run DocCard extraction as a non-blocking tail step. Failures don't
+            # roll back the completed status — the doc stays searchable.
+            try:
+                from api.services.knowledge_base.doc_card_extraction import (
+                    extract_doc_card_for_document,
+                )
+                from api.tasks.arq import enqueue_job
+                from api.tasks.function_names import FunctionNames
+
+                await extract_doc_card_for_document(document_id)
+                await enqueue_job(
+                    FunctionNames.REBUILD_ORG_KNOWLEDGE_INDEX, organization_id
+                )
+            except Exception as extraction_err:
+                logger.warning(
+                    f"DocCard extraction failed for {document_id}: {extraction_err}",
+                    exc_info=True,
+                )
             logger.info(
                 f"Successfully processed full_document {document_id}. "
                 f"Text length: {len(full_text)} chars"
@@ -218,6 +236,25 @@ async def process_knowledge_base_document(
             total_chunks=len(chunk_records),
             docling_metadata=docling_metadata,
         )
+
+        # Run DocCard extraction as a non-blocking tail step. Failures don't
+        # roll back the completed status — the doc stays searchable.
+        try:
+            from api.services.knowledge_base.doc_card_extraction import (
+                extract_doc_card_for_document,
+            )
+            from api.tasks.arq import enqueue_job
+            from api.tasks.function_names import FunctionNames
+
+            await extract_doc_card_for_document(document_id)
+            await enqueue_job(
+                FunctionNames.REBUILD_ORG_KNOWLEDGE_INDEX, organization_id
+            )
+        except Exception as extraction_err:
+            logger.warning(
+                f"DocCard extraction failed for {document_id}: {extraction_err}",
+                exc_info=True,
+            )
 
         logger.info(
             f"Successfully processed knowledge base document {document_id}. "
