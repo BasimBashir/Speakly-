@@ -21,14 +21,15 @@ VRAM budget on a 24 GB card:
 
 | Service | Model | VRAM |
 |---|---|---|
-| vllm | Qwen3 14B AWQ (4-bit, 16K context) | ~13 GB |
+| vllm | Qwen3 14B AWQ (4-bit, 8K context) | ~15.6 GB |
 | embeddings | BGE-M3 | ~2 GB |
 | speaches | Distil-Whisper Large v3 | ~1.5 GB |
 | kokoro | Kokoro-82M | ~0.7 GB |
 | **Total** | | **~17 GB (comfortable)** |
 
-`--gpu-memory-utilization 0.55` on vLLM reserves ~13 GB; weights take ~8 GB
-and the rest is KV cache. Leaves comfortable headroom for the other services.
+`--gpu-memory-utilization 0.65` on vLLM reserves ~15.6 GB; weights take 9.44 GB,
+CUDA graphs and profiling overhead take ~2 GB, and the rest is KV cache (~3 GB
+at 8K context). Leaves ~8 GB on the card for the other GPU services.
 
 **Why not Qwen3 32B?** The 32B model's weights alone are 18.24 GiB — combined
 with KV cache and the other 3 GPU services, it exceeds a 24 GB card. If you

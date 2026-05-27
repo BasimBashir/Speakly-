@@ -86,15 +86,19 @@ services:
       - Qwen/Qwen3-14B-AWQ
       - --quantization
       - awq
-      # 0.55 utilization (~13 GB of 24 GB on 3090). Qwen3-14B-AWQ is ~8 GB
-      # of weights; the rest is KV cache + CUDA graphs. Leaves ~11 GB of
-      # VRAM for the other GPU services (TEI + Kokoro + Speaches ≈ 4 GB)
-      # plus headroom. Qwen3-32B-AWQ would not fit with the other services
-      # on a 24 GB card — its 18.24 GB weights alone leave no KV cache room.
+      # 0.65 utilization (~15.6 GB of 24 GB on 3090). Qwen3-14B-AWQ weights
+      # are 9.44 GiB; the rest is KV cache + CUDA graphs (~1 GiB) + vLLM
+      # profiling overhead. Leaves ~8 GB of VRAM for the other GPU services
+      # (TEI + Kokoro + Speaches ≈ 4 GB) plus OS/driver overhead.
+      #
+      # Qwen3-32B-AWQ would not fit with the other services on a 24 GB card
+      # — its 18.24 GB weights alone leave no KV cache room.
       - --gpu-memory-utilization
-      - "0.55"
+      - "0.65"
+      # 8K context is plenty for voice agent turns and DocCard extraction.
+      # 16K KV cache (2.5 GiB) was too tight on the remaining ~1.15 GiB.
       - --max-model-len
-      - "16384"
+      - "8192"
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
