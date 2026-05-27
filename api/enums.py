@@ -89,6 +89,7 @@ class OrganizationConfigurationKey(Enum):
     LANGFUSE_CREDENTIALS = (
         "LANGFUSE_CREDENTIALS"  # Org-level Langfuse tracing credentials
     )
+    KNOWLEDGE_INDEX = "knowledge_index"
 
 
 class WorkflowStatus(Enum):

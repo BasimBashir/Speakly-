@@ -10,6 +10,7 @@ from typing import Optional
 from loguru import logger
 
 from api.db import db_client
+from api.enums import OrganizationConfigurationKey
 from api.services.worker_sync.protocol import WorkerSyncEvent
 
 _CACHE: dict[int, dict] = {}
@@ -25,7 +26,9 @@ async def get_index_for_org(organization_id: int) -> Optional[dict]:
     if cached is not None:
         return cached
     value = await db_client.get_configuration_value(
-        organization_id=organization_id, key="knowledge_index", default=None
+        organization_id=organization_id,
+        key=OrganizationConfigurationKey.KNOWLEDGE_INDEX.value,
+        default=None,
     )
     if value:
         _CACHE[organization_id] = value
