@@ -36,6 +36,11 @@ MATRYOSHKA_OPENAI_MODELS = (
     "text-embedding-3-large",
 )
 
+# Max batch size per embeddings API call. TEI defaults to 32 (--max-client-batch-size).
+# OpenAI accepts up to 2048 but billing/latency favor smaller batches anyway.
+# 32 is the safe lowest-common-denominator across providers.
+EMBEDDING_BATCH_SIZE = 32
+
 
 class EmbeddingAPIKeyNotConfiguredError(Exception):
     """Raised when OpenAI API key is not configured for embeddings."""
@@ -104,21 +109,33 @@ class OpenAIEmbeddingService(BaseEmbeddingService):
         servers (TEI, Ollama, vLLM) ignore unknown kwargs or reject them, so
         we only pass `dimensions` for known-compatible models.
 
+        Splits requests into batches of EMBEDDING_BATCH_SIZE (32) to stay
+        under TEI's default --max-client-batch-size. Other providers accept
+        larger batches but smaller batches are still fine.
+
         Raises:
             EmbeddingAPIKeyNotConfiguredError: If API key is not configured.
         """
         self._ensure_api_key_configured()
 
-        kwargs: Dict[str, Any] = {"input": texts, "model": self.model_id}
-        if self.model_id in MATRYOSHKA_OPENAI_MODELS:
-            kwargs["dimensions"] = EMBEDDING_DIMENSION
+        all_embeddings: List[List[float]] = []
+        for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
+            batch = texts[i : i + EMBEDDING_BATCH_SIZE]
+            kwargs: Dict[str, Any] = {"input": batch, "model": self.model_id}
+            if self.model_id in MATRYOSHKA_OPENAI_MODELS:
+                kwargs["dimensions"] = EMBEDDING_DIMENSION
 
-        try:
-            response = await self.client.embeddings.create(**kwargs)
-            return [item.embedding for item in response.data]
-        except Exception as e:
-            logger.error(f"Error generating embeddings: {e}")
-            raise
+            try:
+                response = await self.client.embeddings.create(**kwargs)
+            except Exception as e:
+                # Pass message as positional arg (not f-string) so loguru
+                # doesn't try to format literal {'message': ...} substrings
+                # that may appear in upstream error payloads.
+                logger.error("Error generating embeddings: {}", str(e))
+                raise
+            all_embeddings.extend(item.embedding for item in response.data)
+
+        return all_embeddings
 
     async def embed_query(self, query: str) -> List[float]:
         """Embed a single query text using OpenAI API.
