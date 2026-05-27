@@ -19,6 +19,45 @@ interface DocumentListProps {
   refreshTrigger: number;
 }
 
+type PillState =
+  | { kind: 'ready'; label: string; color: 'green' }
+  | { kind: 'needs_description'; label: string; color: 'blue' }
+  | { kind: 'pending'; label: string; color: 'gray' }
+  | { kind: 'no_text'; label: string; color: 'amber' }
+  | { kind: 'failed'; label: string; color: 'red' };
+
+function getDocCardPill(doc: {
+  doc_card_extracted_at?: string | null;
+  user_description?: string | null;
+  processing_status?: string;
+  processing_error?: string | null;
+}): PillState {
+  if (doc.doc_card_extracted_at) {
+    return { kind: 'ready', label: 'Summary ready', color: 'green' };
+  }
+  if (!doc.user_description) {
+    return { kind: 'needs_description', label: 'Needs description', color: 'blue' };
+  }
+  if (doc.processing_error === 'no_text_content') {
+    return { kind: 'no_text', label: 'No text', color: 'amber' };
+  }
+  if (doc.processing_status === 'completed' && !doc.processing_error) {
+    return { kind: 'pending', label: 'Summary pending…', color: 'gray' };
+  }
+  if (doc.processing_error) {
+    return { kind: 'failed', label: 'Summary failed', color: 'red' };
+  }
+  return { kind: 'pending', label: 'Summary pending…', color: 'gray' };
+}
+
+const PILL_CLASS: Record<PillState['color'], string> = {
+  green: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300',
+  blue: 'bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300',
+  gray: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+  amber: 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
+  red: 'bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-300',
+};
+
 export default function DocumentList({ refreshTrigger }: DocumentListProps) {
   const [documents, setDocuments] = useState<DocumentResponseSchema[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -206,6 +245,16 @@ export default function DocumentList({ refreshTrigger }: DocumentListProps) {
                     ) : (
                       <Badge variant="outline" className="text-xs">Chunked</Badge>
                     )}
+                    {(() => {
+                      const pill = getDocCardPill(doc);
+                      return (
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${PILL_CLASS[pill.color]}`}
+                        >
+                          {pill.label}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="flex items-center gap-4 text-sm text-muted-foreground">
                     <span>{formatFileSize(doc.file_size_bytes)}</span>
