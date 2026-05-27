@@ -522,11 +522,13 @@ class PipecatEngine:
             await self._register_knowledge_base_function(node.document_uuids)
 
         # Compose prompt and functions via the context composer module
-        system_prompt = compose_system_prompt_for_node(
+        system_prompt = await compose_system_prompt_for_node(
             node=node,
             workflow=self.workflow,
             format_prompt=self._format_prompt,
             has_recordings=self._has_recordings,
+            organization_id=await self._get_organization_id(),
+            call_direction=self._call_context_vars.get("call_type"),
         )
         functions = await compose_functions_for_node(
             node=node,

@@ -15,6 +15,7 @@ from api.schemas.knowledge_base import (
     DocumentResponseSchema,
     DocumentUploadRequestSchema,
     DocumentUploadResponseSchema,
+    EditDocumentRequestSchema,
     ProcessDocumentRequestSchema,
 )
 from api.sdk_expose import sdk_expose
@@ -122,12 +123,15 @@ async def process_document(
             organization_id=user.selected_organization_id,
             created_by=user.id,
             filename=filename,
-            file_size_bytes=0,  # Will be updated by background task
-            file_hash="",  # Will be computed by background task
-            mime_type="application/octet-stream",  # Will be detected by background task
+            file_size_bytes=0,
+            file_hash="",
+            mime_type="application/octet-stream",
             custom_metadata={"s3_key": request.s3_key},
-            document_uuid=request.document_uuid,  # Use UUID from upload
+            document_uuid=request.document_uuid,
             retrieval_mode=request.retrieval_mode,
+            doc_type=request.doc_type,
+            intended_use=request.intended_use,
+            user_description=request.user_description,
         )
 
         # Enqueue background task for processing
@@ -177,6 +181,12 @@ async def process_document(
             organization_id=user.selected_organization_id,
             created_by=user.id,
             is_active=True,
+            doc_type=request.doc_type,
+            intended_use=request.intended_use,
+            user_description=request.user_description,
+            doc_card=None,
+            doc_card_extracted_at=None,
+            topics=[],
         )
 
     except HTTPException:
@@ -241,6 +251,12 @@ async def list_documents(
                 organization_id=doc.organization_id,
                 created_by=doc.created_by,
                 is_active=doc.is_active,
+                doc_type=doc.doc_type,
+                intended_use=doc.intended_use or [],
+                user_description=doc.user_description,
+                doc_card=doc.doc_card,
+                doc_card_extracted_at=doc.doc_card_extracted_at,
+                topics=doc.topics or [],
             )
             for doc in documents
         ]
@@ -300,6 +316,12 @@ async def get_document(
             organization_id=document.organization_id,
             created_by=document.created_by,
             is_active=document.is_active,
+            doc_type=document.doc_type,
+            intended_use=document.intended_use or [],
+            user_description=document.user_description,
+            doc_card=document.doc_card,
+            doc_card_extracted_at=document.doc_card_extracted_at,
+            topics=document.topics or [],
         )
 
     except HTTPException:
@@ -346,6 +368,108 @@ async def delete_document(
         raise HTTPException(
             status_code=500, detail="Failed to delete document"
         ) from exc
+
+
+@router.patch(
+    "/documents/{document_uuid}",
+    response_model=DocumentResponseSchema,
+    summary="Edit user-provided document fields",
+)
+async def edit_document_inputs(
+    document_uuid: str,
+    request: EditDocumentRequestSchema,
+    user=Depends(get_user),
+):
+    """Edit user-provided fields on a document.
+
+    Does NOT auto-trigger re-extraction. Use POST /documents/{uuid}/re-extract
+    explicitly if you want the DocCard regenerated after editing.
+
+    Access Control:
+    * Users can only edit documents from their organization.
+    """
+    document = await db_client.update_document_user_inputs(
+        document_uuid=document_uuid,
+        organization_id=user.selected_organization_id,
+        doc_type=request.doc_type,
+        intended_use=request.intended_use,
+        user_description=request.user_description,
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    await enqueue_job(
+        FunctionNames.REBUILD_ORG_KNOWLEDGE_INDEX,
+        user.selected_organization_id,
+    )
+
+    return DocumentResponseSchema(
+        id=document.id,
+        document_uuid=document.document_uuid,
+        filename=document.filename,
+        file_size_bytes=document.file_size_bytes,
+        file_hash=document.file_hash,
+        mime_type=document.mime_type,
+        processing_status=document.processing_status,
+        processing_error=document.processing_error,
+        total_chunks=document.total_chunks,
+        retrieval_mode=document.retrieval_mode,
+        custom_metadata=document.custom_metadata,
+        docling_metadata=document.docling_metadata,
+        source_url=document.source_url,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
+        organization_id=document.organization_id,
+        created_by=document.created_by,
+        is_active=document.is_active,
+        doc_type=document.doc_type,
+        intended_use=document.intended_use or [],
+        user_description=document.user_description,
+        doc_card=document.doc_card,
+        doc_card_extracted_at=document.doc_card_extracted_at,
+        topics=document.topics or [],
+    )
+
+
+@router.post(
+    "/documents/{document_uuid}/re-extract",
+    status_code=202,
+    summary="Re-extract the DocCard for a document",
+)
+async def re_extract_doc_card(
+    document_uuid: str,
+    user=Depends(get_user),
+):
+    """Force re-extraction of the DocCard.
+
+    Blocked at 400 if user_description is still null (e.g. legacy uploads).
+
+    Access Control:
+    * Users can only re-extract documents from their organization.
+    """
+    document = await db_client.get_document_by_uuid(
+        document_uuid=document_uuid,
+        organization_id=user.selected_organization_id,
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not document.user_description:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot re-extract: document has no user_description. PATCH the document first.",
+        )
+
+    await enqueue_job(
+        FunctionNames.PROCESS_KNOWLEDGE_BASE_DOCUMENT,
+        document.id,
+        document.custom_metadata.get("s3_key", ""),
+        user.selected_organization_id,
+        str(user.provider_id),
+        128,
+        document.retrieval_mode,
+    )
+    return {"status": "enqueued", "document_uuid": document_uuid}
 
 
 @router.post(

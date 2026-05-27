@@ -38,6 +38,10 @@ if str(SDK_PY_SRC) not in sys.path:
 from api.constants import APP_ROOT_DIR  # noqa: E402
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "mps: tests that require the live MPS service")
+
+
 def setup_test_logging():
     """Configure logging for tests using LOG_LEVEL from .env.test"""
     log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()

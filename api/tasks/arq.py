@@ -44,6 +44,7 @@ from api.tasks.campaign_tasks import (
     sync_campaign_source,
 )
 from api.tasks.knowledge_base_processing import process_knowledge_base_document
+from api.tasks.org_index_rebuild import rebuild_org_knowledge_index
 from api.tasks.run_integrations import run_integrations_post_workflow_run
 from api.tasks.s3_upload import (
     process_workflow_completion,
@@ -59,6 +60,7 @@ class WorkerSettings:
         sync_campaign_source,
         process_campaign_batch,
         process_knowledge_base_document,
+        rebuild_org_knowledge_index,
     ]
     cron_jobs = []
     redis_settings = REDIS_SETTINGS

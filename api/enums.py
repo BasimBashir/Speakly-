@@ -89,6 +89,7 @@ class OrganizationConfigurationKey(Enum):
     LANGFUSE_CREDENTIALS = (
         "LANGFUSE_CREDENTIALS"  # Org-level Langfuse tracing credentials
     )
+    KNOWLEDGE_INDEX = "knowledge_index"
 
 
 class WorkflowStatus(Enum):
@@ -160,3 +161,4 @@ class PostHogEvent(str, Enum):
     AGENT_EMBEDDED = "agent_embedded"
     SIGNED_UP = "signed_up"
     SIGNED_IN = "signed_in"
+    KNOWLEDGE_BASE_DOC_CARD_GENERATED = "knowledge_base_doc_card_generated"

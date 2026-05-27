@@ -1,6 +1,7 @@
 """Database client for managing knowledge base documents and chunks."""
 
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -27,6 +28,9 @@ class KnowledgeBaseClient(BaseDBClient):
         custom_metadata: Optional[dict] = None,
         docling_metadata: Optional[dict] = None,
         document_uuid: Optional[str] = None,
+        doc_type: Optional[str] = None,
+        intended_use: Optional[List[str]] = None,
+        user_description: Optional[str] = None,
         retrieval_mode: str = "chunked",
     ) -> KnowledgeBaseDocumentModel:
         """Create a new knowledge base document record.
@@ -60,6 +64,9 @@ class KnowledgeBaseClient(BaseDBClient):
                 processing_status="pending",
                 total_chunks=0,
                 retrieval_mode=retrieval_mode,
+                doc_type=doc_type,
+                intended_use=intended_use or [],
+                user_description=user_description,
             )
 
             # Use provided UUID or let the model generate one
@@ -511,6 +518,81 @@ class KnowledgeBaseClient(BaseDBClient):
                 f"Deleted document {document_uuid} for organization {organization_id}"
             )
             return True
+
+    async def update_document_user_inputs(
+        self,
+        document_uuid: str,
+        organization_id: int,
+        doc_type: Optional[str] = None,
+        intended_use: Optional[List[str]] = None,
+        user_description: Optional[str] = None,
+    ) -> Optional[KnowledgeBaseDocumentModel]:
+        """Update user-provided fields. Org-scoped. Returns None if not found.
+
+        Editing these fields does NOT auto-trigger re-extraction.
+        """
+        async with self.async_session() as session:
+            query = select(KnowledgeBaseDocumentModel).where(
+                KnowledgeBaseDocumentModel.document_uuid == document_uuid,
+                KnowledgeBaseDocumentModel.organization_id == organization_id,
+                KnowledgeBaseDocumentModel.is_active == True,
+            )
+            result = await session.execute(query)
+            document = result.scalar_one_or_none()
+            if not document:
+                return None
+            if doc_type is not None:
+                document.doc_type = doc_type
+            if intended_use is not None:
+                document.intended_use = intended_use
+            if user_description is not None:
+                document.user_description = user_description
+            await session.commit()
+            await session.refresh(document)
+            return document
+
+    async def update_doc_card(
+        self,
+        document_id: int,
+        doc_card: dict,
+        topics: list[str],
+    ) -> Optional[KnowledgeBaseDocumentModel]:
+        """Persist the extracted DocCard and bump doc_card_extracted_at.
+
+        topics is denormalized from doc_card['topics'] for GIN indexing.
+        """
+        async with self.async_session() as session:
+            query = select(KnowledgeBaseDocumentModel).where(
+                KnowledgeBaseDocumentModel.id == document_id
+            )
+            result = await session.execute(query)
+            document = result.scalar_one_or_none()
+            if not document:
+                return None
+            document.doc_card = doc_card
+            document.topics = topics
+            document.doc_card_extracted_at = datetime.now(UTC)
+            await session.commit()
+            await session.refresh(document)
+            return document
+
+    async def list_active_documents_for_index(
+        self,
+        organization_id: int,
+    ) -> List[KnowledgeBaseDocumentModel]:
+        """List active docs with a non-null doc_card for the org index builder."""
+        async with self.async_session() as session:
+            query = (
+                select(KnowledgeBaseDocumentModel)
+                .where(
+                    KnowledgeBaseDocumentModel.organization_id == organization_id,
+                    KnowledgeBaseDocumentModel.is_active == True,
+                    KnowledgeBaseDocumentModel.doc_card.isnot(None),
+                )
+                .order_by(KnowledgeBaseDocumentModel.created_at.desc())
+            )
+            result = await session.execute(query)
+            return list(result.scalars().all())
 
     @staticmethod
     def compute_file_hash(file_path: str) -> str:

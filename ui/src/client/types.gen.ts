@@ -1405,6 +1405,32 @@ export type DocumentResponseSchema = {
      */
     retrieval_mode?: string;
     /**
+     * Doc Type
+     */
+    doc_type?: string | null;
+    /**
+     * Intended Use
+     */
+    intended_use?: Array<string>;
+    /**
+     * User Description
+     */
+    user_description?: string | null;
+    /**
+     * Doc Card
+     */
+    doc_card?: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * Doc Card Extracted At
+     */
+    doc_card_extracted_at?: string | null;
+    /**
+     * Topics
+     */
+    topics?: Array<string>;
+    /**
      * Custom Metadata
      */
     custom_metadata: {
@@ -1508,6 +1534,29 @@ export type DuplicateTemplateRequest = {
      * Workflow Name
      */
     workflow_name: string;
+};
+
+/**
+ * EditDocumentRequestSchema
+ *
+ * Request schema for editing user-provided document inputs.
+ *
+ * All fields optional — only provided fields are updated.
+ * Editing these fields does NOT auto-trigger re-extraction.
+ */
+export type EditDocumentRequestSchema = {
+    /**
+     * Doc Type
+     */
+    doc_type?: string | null;
+    /**
+     * Intended Use
+     */
+    intended_use?: Array<string> | null;
+    /**
+     * User Description
+     */
+    user_description?: string | null;
 };
 
 /**
@@ -2608,6 +2657,24 @@ export type ProcessDocumentRequestSchema = {
      * Retrieval mode: 'chunked' for vector search or 'full_document' for full text retrieval
      */
     retrieval_mode?: string;
+    /**
+     * Doc Type
+     *
+     * Document type: contract, policy, pricing, faq, script, or other
+     */
+    doc_type: string;
+    /**
+     * Intended Use
+     *
+     * One or both of: inbound, outbound
+     */
+    intended_use: Array<string>;
+    /**
+     * User Description
+     *
+     * User-provided description of what this doc is and how the agent should use it
+     */
+    user_description: string;
 };
 
 /**
@@ -4413,6 +4480,10 @@ export type WorkflowListResponse = {
      * Folder Id
      */
     folder_id?: number | null;
+    /**
+     * Workflow Uuid
+     */
+    workflow_uuid?: string | null;
 };
 
 /**
@@ -5071,20 +5142,6 @@ export type HandleCloudonixCdrApiV1TelephonyCloudonixCdrPostResponses = {
 
 export type HandlePlivoHangupCallbackApiV1TelephonyPlivoHangupCallbackWorkflowRunIdPostData = {
     body?: never;
-    headers?: {
-        /**
-         * X-Plivo-Signature-V3
-         */
-        'x-plivo-signature-v3'?: string | null;
-        /**
-         * X-Plivo-Signature-Ma-V3
-         */
-        'x-plivo-signature-ma-v3'?: string | null;
-        /**
-         * X-Plivo-Signature-V3-Nonce
-         */
-        'x-plivo-signature-v3-nonce'?: string | null;
-    };
     path: {
         /**
          * Workflow Run Id
@@ -5117,20 +5174,6 @@ export type HandlePlivoHangupCallbackApiV1TelephonyPlivoHangupCallbackWorkflowRu
 
 export type HandlePlivoRingCallbackApiV1TelephonyPlivoRingCallbackWorkflowRunIdPostData = {
     body?: never;
-    headers?: {
-        /**
-         * X-Plivo-Signature-V3
-         */
-        'x-plivo-signature-v3'?: string | null;
-        /**
-         * X-Plivo-Signature-Ma-V3
-         */
-        'x-plivo-signature-ma-v3'?: string | null;
-        /**
-         * X-Plivo-Signature-V3-Nonce
-         */
-        'x-plivo-signature-v3-nonce'?: string | null;
-    };
     path: {
         /**
          * Workflow Run Id
@@ -5227,12 +5270,6 @@ export type HandleTelnyxTransferResultApiV1TelephonyTelnyxTransferResultTransfer
 
 export type HandleTwilioStatusCallbackApiV1TelephonyTwilioStatusCallbackWorkflowRunIdPostData = {
     body?: never;
-    headers?: {
-        /**
-         * X-Webhook-Signature
-         */
-        'x-webhook-signature'?: string | null;
-    };
     path: {
         /**
          * Workflow Run Id
@@ -10075,6 +10112,86 @@ export type InitiateCallTestApiV1PublicAgentTestUuidPostResponses = {
 
 export type InitiateCallTestApiV1PublicAgentTestUuidPostResponse = InitiateCallTestApiV1PublicAgentTestUuidPostResponses[keyof InitiateCallTestApiV1PublicAgentTestUuidPostResponses];
 
+export type InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostData = {
+    body: TriggerCallRequest;
+    headers: {
+        /**
+         * X-Api-Key
+         */
+        'X-API-Key': string;
+    };
+    path: {
+        /**
+         * Workflow Uuid
+         */
+        workflow_uuid: string;
+    };
+    query?: never;
+    url: '/api/v1/public/agent/workflow/{workflow_uuid}';
+};
+
+export type InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostError = InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostErrors[keyof InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostErrors];
+
+export type InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: TriggerCallResponse;
+};
+
+export type InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostResponse = InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostResponses[keyof InitiateCallByWorkflowUuidApiV1PublicAgentWorkflowWorkflowUuidPostResponses];
+
+export type InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostData = {
+    body: TriggerCallRequest;
+    headers: {
+        /**
+         * X-Api-Key
+         */
+        'X-API-Key': string;
+    };
+    path: {
+        /**
+         * Workflow Uuid
+         */
+        workflow_uuid: string;
+    };
+    query?: never;
+    url: '/api/v1/public/agent/test/workflow/{workflow_uuid}';
+};
+
+export type InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostError = InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostErrors[keyof InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostErrors];
+
+export type InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: TriggerCallResponse;
+};
+
+export type InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostResponse = InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostResponses[keyof InitiateCallTestByWorkflowUuidApiV1PublicAgentTestWorkflowWorkflowUuidPostResponses];
+
 export type DownloadWorkflowArtifactApiV1PublicDownloadWorkflowTokenArtifactTypeGetData = {
     body?: never;
     path: {
@@ -10473,6 +10590,92 @@ export type GetDocumentApiV1KnowledgeBaseDocumentsDocumentUuidGetResponses = {
 };
 
 export type GetDocumentApiV1KnowledgeBaseDocumentsDocumentUuidGetResponse = GetDocumentApiV1KnowledgeBaseDocumentsDocumentUuidGetResponses[keyof GetDocumentApiV1KnowledgeBaseDocumentsDocumentUuidGetResponses];
+
+export type EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchData = {
+    body: EditDocumentRequestSchema;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Api-Key
+         */
+        'X-API-Key'?: string | null;
+    };
+    path: {
+        /**
+         * Document Uuid
+         */
+        document_uuid: string;
+    };
+    query?: never;
+    url: '/api/v1/knowledge-base/documents/{document_uuid}';
+};
+
+export type EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchError = EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchErrors[keyof EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchErrors];
+
+export type EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: DocumentResponseSchema;
+};
+
+export type EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchResponse = EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchResponses[keyof EditDocumentInputsApiV1KnowledgeBaseDocumentsDocumentUuidPatchResponses];
+
+export type ReExtractDocCardApiV1KnowledgeBaseDocumentsDocumentUuidReExtractPostData = {
+    body?: never;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Api-Key
+         */
+        'X-API-Key'?: string | null;
+    };
+    path: {
+        /**
+         * Document Uuid
+         */
+        document_uuid: string;
+    };
+    query?: never;
+    url: '/api/v1/knowledge-base/documents/{document_uuid}/re-extract';
+};
+
+export type ReExtractDocCardApiV1KnowledgeBaseDocumentsDocumentUuidReExtractPostErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ReExtractDocCardApiV1KnowledgeBaseDocumentsDocumentUuidReExtractPostError = ReExtractDocCardApiV1KnowledgeBaseDocumentsDocumentUuidReExtractPostErrors[keyof ReExtractDocCardApiV1KnowledgeBaseDocumentsDocumentUuidReExtractPostErrors];
+
+export type ReExtractDocCardApiV1KnowledgeBaseDocumentsDocumentUuidReExtractPostResponses = {
+    /**
+     * Successful Response
+     */
+    202: unknown;
+};
 
 export type SearchChunksApiV1KnowledgeBaseSearchPostData = {
     body: ChunkSearchRequestSchema;

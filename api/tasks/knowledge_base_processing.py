@@ -19,6 +19,34 @@ from api.services.storage import storage_fs
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
 
 
+async def _enqueue_doc_card_extraction(
+    document_id: int, organization_id: int
+) -> None:
+    """Best-effort DocCard extraction + org-index rebuild after a doc completes.
+
+    Failures are logged and swallowed — the document remains in `completed`
+    state regardless. This is an enrichment step, not part of the critical path.
+    Imports are local so a missing `FunctionNames.REBUILD_ORG_KNOWLEDGE_INDEX`
+    (until Task 13 lands) is caught as AttributeError, not at import time.
+    """
+    try:
+        from api.services.knowledge_base.doc_card_extraction import (
+            extract_doc_card_for_document,
+        )
+        from api.tasks.arq import enqueue_job
+        from api.tasks.function_names import FunctionNames
+
+        await extract_doc_card_for_document(document_id)
+        await enqueue_job(
+            FunctionNames.REBUILD_ORG_KNOWLEDGE_INDEX, organization_id
+        )
+    except Exception as extraction_err:
+        logger.warning(
+            f"DocCard extraction failed for {document_id}: {extraction_err}",
+            exc_info=True,
+        )
+
+
 async def process_knowledge_base_document(
     ctx,
     document_id: int,
@@ -142,6 +170,7 @@ async def process_knowledge_base_document(
                 total_chunks=0,
                 docling_metadata=docling_metadata,
             )
+            await _enqueue_doc_card_extraction(document_id, organization_id)
             logger.info(
                 f"Successfully processed full_document {document_id}. "
                 f"Text length: {len(full_text)} chars"
@@ -218,6 +247,8 @@ async def process_knowledge_base_document(
             total_chunks=len(chunk_records),
             docling_metadata=docling_metadata,
         )
+
+        await _enqueue_doc_card_extraction(document_id, organization_id)
 
         logger.info(
             f"Successfully processed knowledge base document {document_id}. "

@@ -4,12 +4,16 @@ Extracts prompt and function composition logic from PipecatEngine into
 reusable functions. Defines recording response mode markers and instructions.
 """
 
+import os
 from typing import TYPE_CHECKING, Callable, Optional
+from typing import Optional as _Optional
 
 if TYPE_CHECKING:
     from api.services.workflow.pipecat_engine_custom_tools import CustomToolManager
     from api.services.workflow.workflow_graph import Node, WorkflowGraph
 
+from api.services.knowledge_base.org_index_cache import get_index_for_org
+from api.services.knowledge_base.org_index_renderer import enforce_size_budget
 from api.services.workflow.pipecat_engine_custom_tools import get_function_schema
 from api.services.workflow.tools.knowledge_base import get_knowledge_base_tool
 
@@ -45,13 +49,68 @@ RULES:
 - Use ▸ when you need to generate a dynamic, contextual response.
 - *NEVER* mix modes in a single response, since we rely on the markers to decide whether to play using TTS or Pre-recorded audio."""
 
+KB_INDEX_PROMPT_BUDGET_CHARS = int(
+    os.environ.get("KB_INDEX_PROMPT_BUDGET_CHARS", "32000")
+)
 
-def compose_system_prompt_for_node(
+
+async def compose_kb_index_section(
+    *,
+    organization_id: int,
+    call_direction: _Optional[str],
+    enabled: bool,
+) -> str:
+    if not enabled:
+        return ""
+
+    payload = await get_index_for_org(organization_id)
+    if not payload:
+        return ""
+
+    base_md = payload.get("md") or ""
+    md = base_md if not call_direction else _direction_filter_text(base_md, call_direction)
+    md = enforce_size_budget(md, max_bytes=KB_INDEX_PROMPT_BUDGET_CHARS)
+
+    if not md.strip() or "0 docs" in md.split("\n", 1)[0]:
+        return ""
+
+    return (
+        "<organization_knowledge>\n"
+        "The following is your organization's knowledge index — a table of "
+        "contents of documents available to you. Use it to decide WHICH document "
+        "to look in. To get actual content, call the `retrieve_from_knowledge_base` "
+        "tool with a specific question.\n\n"
+        f"{md}\n\n"
+        "Important rules:\n"
+        "- The index is a guide, not a source of truth. Quote facts only after "
+        "retrieving them with the tool.\n"
+        "- If a caller asks about something not in the index, say so honestly.\n"
+        "- Prefer documents whose intended_use matches this call's direction.\n"
+        "</organization_knowledge>"
+    )
+
+
+def _direction_filter_text(md: str, direction: str) -> str:
+    out = []
+    for line in md.split("\n"):
+        if line.startswith("- "):
+            uses_segment = line.split("_uses:", 1)
+            if len(uses_segment) == 2:
+                uses = uses_segment[1].split("_", 1)[0]
+                if direction not in uses:
+                    continue
+        out.append(line)
+    return "\n".join(out)
+
+
+async def compose_system_prompt_for_node(
     *,
     node: "Node",
     workflow: "WorkflowGraph",
     format_prompt: Callable[[str], str],
     has_recordings: bool,
+    organization_id: _Optional[int] = None,
+    call_direction: _Optional[str] = None,
 ) -> str:
     """Compose the full system prompt text for a workflow node.
 
@@ -79,6 +138,16 @@ def compose_system_prompt_for_node(
 
     if has_recordings and "RECORDING_ID:" in formatted_node_prompt:
         parts.append(RECORDING_RESPONSE_MODE_INSTRUCTIONS)
+
+    if organization_id is not None:
+        include_index = getattr(node, "include_kb_index", True)
+        kb_section = await compose_kb_index_section(
+            organization_id=organization_id,
+            call_direction=call_direction,
+            enabled=include_index,
+        )
+        if kb_section:
+            parts.append(kb_section)
 
     return "\n\n".join(parts)
 

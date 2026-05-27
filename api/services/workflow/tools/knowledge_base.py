@@ -312,6 +312,11 @@ def get_knowledge_base_tool(
             "that might be stored in the knowledge base documents."
         )
 
+    description += (
+        " Refer to the `<organization_knowledge>` index in your system prompt to "
+        "identify which documents are likely relevant before searching."
+    )
+
     return {
         "type": "function",
         "function": {

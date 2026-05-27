@@ -84,8 +84,9 @@ cd "$ROOT_DIR"
 
 step "Fixing ownership of named volume mountpoints"
 # Named volumes are created owned by root; postCreateCommand runs as the
-# remote user. Chown the mountpoint roots so the steps below can write.
-sudo chown "$(id -u):$(id -g)" \
+# remote user. Chown recursively so rsync --delete can remove stale files
+# (e.g. .pyc files created by root in a previous session).
+sudo chown -R "$(id -u):$(id -g)" \
   "$VENV_PATH" \
   "$ROOT_DIR/ui/node_modules" \
   "$ROOT_DIR/api/mcp_server/ts_validator/node_modules"

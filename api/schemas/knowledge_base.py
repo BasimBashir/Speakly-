@@ -33,6 +33,21 @@ class ProcessDocumentRequestSchema(BaseModel):
         default="chunked",
         description="Retrieval mode: 'chunked' for vector search or 'full_document' for full text retrieval",
     )
+    doc_type: str = Field(
+        ...,
+        description="Document type: contract, policy, pricing, faq, script, or other",
+        min_length=1,
+    )
+    intended_use: list[str] = Field(
+        ...,
+        description="One or both of: inbound, outbound",
+        min_length=1,
+    )
+    user_description: str = Field(
+        ...,
+        description="User-provided description of what this doc is and how the agent should use it",
+        min_length=20,
+    )
 
 
 class DocumentResponseSchema(BaseModel):
@@ -48,6 +63,12 @@ class DocumentResponseSchema(BaseModel):
     processing_error: Optional[str] = None
     total_chunks: int
     retrieval_mode: str = "chunked"
+    doc_type: Optional[str] = None
+    intended_use: List[str] = Field(default_factory=list)
+    user_description: Optional[str] = None
+    doc_card: Optional[Dict[str, Any]] = None
+    doc_card_extracted_at: Optional[datetime] = None
+    topics: List[str] = Field(default_factory=list)
     custom_metadata: Dict[str, Any]
     docling_metadata: Dict[str, Any]
     source_url: Optional[str] = None
@@ -100,3 +121,15 @@ class ChunkSearchResponseSchema(BaseModel):
     chunks: List[ChunkResponseSchema]
     query: str
     total_results: int
+
+
+class EditDocumentRequestSchema(BaseModel):
+    """Request schema for editing user-provided document inputs.
+
+    All fields optional — only provided fields are updated.
+    Editing these fields does NOT auto-trigger re-extraction.
+    """
+
+    doc_type: Optional[str] = Field(default=None, min_length=1)
+    intended_use: Optional[List[str]] = Field(default=None, min_length=1)
+    user_description: Optional[str] = Field(default=None, min_length=20)
