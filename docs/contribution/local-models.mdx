@@ -21,15 +21,26 @@ VRAM budget on a 24 GB card:
 
 | Service | Model | VRAM |
 |---|---|---|
-| vllm | Qwen3 32B AWQ (4-bit) | ~15 GB |
+| vllm | Qwen3 32B AWQ (4-bit, 8K context) | ~20 GB |
 | embeddings | BGE-M3 | ~2 GB |
-| speaches | Whisper Large v3 (faster-whisper) | ~3 GB |
+| speaches | Distil-Whisper Large v3 | ~1.5 GB |
 | kokoro | Kokoro-82M | ~0.7 GB |
-| **Total** | | **~21 GB** |
+| **Total** | | **~24 GB (tight)** |
 
-`--gpu-memory-utilization 0.62` on vLLM is what reserves the remaining ~9 GB
-for the other three services. If you have a smaller GPU, downgrade to
-`Qwen/Qwen3-14B-Instruct-AWQ` (~8 GB) and raise utilization to `0.5`.
+`--gpu-memory-utilization 0.85` on vLLM reserves ~20 GB; the model itself
+takes 18.24 GiB, leaving ~1.5 GB for KV cache (sufficient at `--max-model-len 8192`).
+
+**If you OOM**, downgrade to `Qwen/Qwen3-14B-AWQ` (~8 GB) and lower utilization
+to `0.55`. That gives the other services plenty of headroom and still supports
+solid tool calling.
+
+**Speed up first-time downloads** by setting a Hugging Face token before
+`devcontainer up`. Without a token, downloads are throttled — the Qwen3 32B
+download can take 45-60 minutes:
+
+```bash
+export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+```
 
 ## Prerequisites
 

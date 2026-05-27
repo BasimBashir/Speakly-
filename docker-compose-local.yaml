@@ -86,10 +86,15 @@ services:
       - Qwen/Qwen3-32B-AWQ
       - --quantization
       - awq
+      # 0.85 utilization (~20 GB of 24 GB on 3090). The model itself is
+      # 18.24 GiB; the rest is KV cache. Other GPU services (TEI, Kokoro,
+      # Speaches) share the remaining ~4 GB.
       - --gpu-memory-utilization
-      - "0.62"
+      - "0.85"
+      # 8192 context is plenty for voice agent turns and DocCard extraction.
+      # 32K context's KV cache won't fit alongside the model on a 24 GB card.
       - --max-model-len
-      - "32768"
+      - "8192"
       - --enable-auto-tool-choice
       - --tool-call-parser
       - qwen3_coder
