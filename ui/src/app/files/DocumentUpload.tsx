@@ -10,9 +10,18 @@ import {
 } from '@/client/sdk.gen';
 import type { DocumentUploadResponseSchema } from '@/client/types.gen';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { useAppConfig } from '@/context/AppConfigContext';
 import logger from '@/lib/logger';
 
@@ -23,15 +32,36 @@ interface DocumentUploadProps {
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ACCEPTED_FILE_TYPES = ['.pdf', '.docx', '.doc', '.txt', '.json'];
 
+const DOC_TYPE_OPTIONS = [
+  { value: 'contract', label: 'Contract' },
+  { value: 'policy', label: 'Policy' },
+  { value: 'pricing', label: 'Pricing' },
+  { value: 'faq', label: 'FAQ' },
+  { value: 'script', label: 'Script' },
+  { value: 'other', label: 'Other' },
+] as const;
+
+const MIN_DESCRIPTION_LENGTH = 20;
+
 export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps) {
   const { config } = useAppConfig();
   const isOSS = config?.deploymentMode === 'oss';
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [retrievalMode, setRetrievalMode] = useState<string>('full_document');
+  const [docType, setDocType] = useState<string>('');
+  const [intendedUse, setIntendedUse] = useState<{ inbound: boolean; outbound: boolean }>({
+    inbound: false,
+    outbound: false,
+  });
+  const [userDescription, setUserDescription] = useState<string>('');
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const intendedUseSelected = intendedUse.inbound || intendedUse.outbound;
+  const descriptionValid = userDescription.trim().length >= MIN_DESCRIPTION_LENGTH;
+  const formComplete = selectedFile && docType && intendedUseSelected && descriptionValid;
 
   const ossNotice = isOSS ? (
     <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
@@ -76,13 +106,16 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
   const clearSelectedFile = () => {
     setSelectedFile(null);
     setRetrievalMode('full_document');
+    setDocType('');
+    setIntendedUse({ inbound: false, outbound: false });
+    setUserDescription('');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
   const uploadFile = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !formComplete) return;
 
     setUploading(true);
     setUploadProgress(0);
@@ -121,11 +154,18 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
 
       setUploadProgress(75);
 
+      const intendedUseValues: string[] = [];
+      if (intendedUse.inbound) intendedUseValues.push('inbound');
+      if (intendedUse.outbound) intendedUseValues.push('outbound');
+
       const processResponse = await processDocumentApiV1KnowledgeBaseProcessDocumentPost({
         body: {
           document_uuid: uploadData.document_uuid,
           s3_key: uploadData.s3_key,
           retrieval_mode: retrievalMode,
+          doc_type: docType,
+          intended_use: intendedUseValues,
+          user_description: userDescription.trim(),
         },
       });
 
@@ -178,7 +218,7 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
     fileInputRef.current?.click();
   };
 
-  // Step 2: File selected — show retrieval mode choice
+  // Step 2: File selected — show form fields and retrieval mode choice
   if (selectedFile && !uploading) {
     return (
       <div className="space-y-4">
@@ -195,6 +235,79 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
           <Button variant="ghost" size="icon" onClick={clearSelectedFile}>
             <X className="w-4 h-4" />
           </Button>
+        </div>
+
+        {/* Document type */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">
+            Document type <span className="text-destructive">*</span>
+          </Label>
+          <Select value={docType} onValueChange={setDocType}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a document type" />
+            </SelectTrigger>
+            <SelectContent>
+              {DOC_TYPE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Intended use */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">
+            Intended use <span className="text-destructive">*</span>
+          </Label>
+          <p className="text-xs text-muted-foreground">Select at least one.</p>
+          <div className="flex items-center gap-6">
+            <label htmlFor="use-inbound" className="flex items-center gap-2 cursor-pointer">
+              <Checkbox
+                id="use-inbound"
+                checked={intendedUse.inbound}
+                onCheckedChange={(checked) =>
+                  setIntendedUse((prev) => ({ ...prev, inbound: checked === true }))
+                }
+              />
+              <span className="text-sm">Inbound</span>
+            </label>
+            <label htmlFor="use-outbound" className="flex items-center gap-2 cursor-pointer">
+              <Checkbox
+                id="use-outbound"
+                checked={intendedUse.outbound}
+                onCheckedChange={(checked) =>
+                  setIntendedUse((prev) => ({ ...prev, outbound: checked === true }))
+                }
+              />
+              <span className="text-sm">Outbound</span>
+            </label>
+          </div>
+        </div>
+
+        {/* Description */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">
+            Describe this document <span className="text-destructive">*</span>
+          </Label>
+          <Textarea
+            value={userDescription}
+            onChange={(e) => setUserDescription(e.target.value)}
+            placeholder="Explain what this document contains and how the agent should use it (min 20 characters)"
+            className="min-h-20"
+          />
+          <div className="flex justify-end">
+            <span
+              className={`text-xs ${
+                userDescription.trim().length >= MIN_DESCRIPTION_LENGTH
+                  ? 'text-muted-foreground'
+                  : 'text-destructive'
+              }`}
+            >
+              {userDescription.trim().length}/{MIN_DESCRIPTION_LENGTH} min characters
+            </span>
+          </div>
         </div>
 
         {/* Retrieval mode selection */}
@@ -235,7 +348,7 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
         </div>
 
         {/* Upload button */}
-        <Button onClick={uploadFile} className="w-full">
+        <Button onClick={uploadFile} className="w-full" disabled={!formComplete}>
           Upload & Process
         </Button>
       </div>
