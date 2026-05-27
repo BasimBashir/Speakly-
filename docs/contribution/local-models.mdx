@@ -112,7 +112,7 @@ container DNS names (Dograh reaches them over the docker network):
 
 | Component | UI Provider | base_url | model | api_key |
 |---|---|---|---|---|
-| **LLM** | Local Models (Speaches) | `http://vllm:8000/v1` | `Qwen/Qwen3-32B-Instruct-AWQ` | `dummy` |
+| **LLM** | Local Models (Speaches) | `http://vllm:8000/v1` | `Qwen/Qwen3-32B-AWQ` | `dummy` |
 | **Embedding** | OpenAI (custom base_url) | `http://embeddings:80/v1` | `BAAI/bge-m3` | `dummy` |
 | **TTS** | OpenAI (custom base_url) | `http://kokoro:8880/v1` | `kokoro` | `dummy` |
 | **STT** | Local Models (Speaches) | `http://speaches:8000/v1` | `Systran/faster-distil-whisper-large-v3` | `dummy` |
@@ -166,7 +166,7 @@ If you want to avoid the first-start download time, pre-fetch into the volume:
 # Pre-download Qwen3 32B AWQ
 docker run --rm -v dograh_hf_cache:/root/.cache/huggingface python:3.11-slim \
   bash -c "pip install huggingface-hub && \
-           huggingface-cli download Qwen/Qwen3-32B-Instruct-AWQ"
+           huggingface-cli download Qwen/Qwen3-32B-AWQ"
 ```
 
 ### Disabling the local stack

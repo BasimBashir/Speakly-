@@ -83,7 +83,7 @@ services:
     image: vllm/vllm-openai:latest
     command:
       - --model
-      - Qwen/Qwen3-32B-Instruct-AWQ
+      - Qwen/Qwen3-32B-AWQ
       - --quantization
       - awq
       - --gpu-memory-utilization
