@@ -5,7 +5,6 @@ Invalid JSON, missing API key for non-Dograh provider, validation errors.
 
 import json
 import uuid
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,10 +15,9 @@ from api.services.knowledge_base.doc_card_extraction import (
 )
 
 
-def _mock_llm_response(content: str):
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-    )
+def _mock_llm_text(content: str):
+    """Pipecat's run_inference returns raw text."""
+    return content
 
 
 def _valid_card():
@@ -74,10 +72,10 @@ async def test_invalid_json_triggers_repair_then_succeeds(db_session):
     doc = await _make_extractable_doc(db_session, org_id, user_id)
 
     fake_llm = AsyncMock()
-    fake_llm.create_chat_completion = AsyncMock(
+    fake_llm.run_inference = AsyncMock(
         side_effect=[
-            _mock_llm_response("not json at all {[}"),
-            _mock_llm_response(json.dumps(_valid_card())),
+            _mock_llm_text("not json at all {[}"),
+            _mock_llm_text(json.dumps(_valid_card())),
         ]
     )
 
@@ -88,7 +86,7 @@ async def test_invalid_json_triggers_repair_then_succeeds(db_session):
         card = await extract_doc_card_for_document(doc.id)
 
     assert card is not None
-    assert fake_llm.create_chat_completion.call_count == 2  # repair attempt happened
+    assert fake_llm.run_inference.call_count == 2  # repair attempt happened
 
 
 @pytest.mark.asyncio
@@ -98,8 +96,8 @@ async def test_invalid_json_twice_raises(db_session):
     doc = await _make_extractable_doc(db_session, org_id, user_id)
 
     fake_llm = AsyncMock()
-    fake_llm.create_chat_completion = AsyncMock(
-        return_value=_mock_llm_response("still not json")
+    fake_llm.run_inference = AsyncMock(
+        return_value=_mock_llm_text("still not json")
     )
 
     with patch(
@@ -118,10 +116,10 @@ async def test_validation_failure_triggers_repair(db_session):
 
     bad = {"summary_150_words": "S"}  # missing required `title` and other required-by-schema fields
     fake_llm = AsyncMock()
-    fake_llm.create_chat_completion = AsyncMock(
+    fake_llm.run_inference = AsyncMock(
         side_effect=[
-            _mock_llm_response(json.dumps(bad)),
-            _mock_llm_response(json.dumps(_valid_card())),
+            _mock_llm_text(json.dumps(bad)),
+            _mock_llm_text(json.dumps(_valid_card())),
         ]
     )
 
@@ -132,7 +130,7 @@ async def test_validation_failure_triggers_repair(db_session):
         card = await extract_doc_card_for_document(doc.id)
 
     assert card is not None
-    assert fake_llm.create_chat_completion.call_count == 2
+    assert fake_llm.run_inference.call_count == 2
 
 
 @pytest.mark.asyncio

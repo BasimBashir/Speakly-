@@ -5,7 +5,6 @@ Uses the real test DB (api/.env.test) but mocks the LLM service.
 
 import json
 import uuid
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -34,10 +33,9 @@ VALID_CARD = {
 }
 
 
-def _mock_llm_response(content: str):
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
-    )
+def _mock_llm_text(content: str):
+    """Pipecat's run_inference returns raw text, not a response object."""
+    return content
 
 
 async def _make_org_and_user(db_session):
@@ -77,8 +75,8 @@ async def test_extraction_happy_path(db_session):
     await db_session.update_document_status(document.id, "completed", total_chunks=0)
 
     fake_llm = AsyncMock()
-    fake_llm.create_chat_completion = AsyncMock(
-        return_value=_mock_llm_response(json.dumps(VALID_CARD))
+    fake_llm.run_inference = AsyncMock(
+        return_value=_mock_llm_text(json.dumps(VALID_CARD))
     )
 
     with patch(
@@ -151,8 +149,8 @@ async def test_extraction_org_isolation(db_session):
 
     fake_llm = AsyncMock()
     card_a = {**VALID_CARD, "title": "A"}
-    fake_llm.create_chat_completion = AsyncMock(
-        return_value=_mock_llm_response(json.dumps(card_a))
+    fake_llm.run_inference = AsyncMock(
+        return_value=_mock_llm_text(json.dumps(card_a))
     )
 
     with patch(

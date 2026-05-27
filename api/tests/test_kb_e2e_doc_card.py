@@ -76,11 +76,7 @@ async def test_full_pipeline_produces_index_section(db_session):
         "topics": ["test", "fixture"],
     }
     fake_llm = AsyncMock()
-    fake_llm.create_chat_completion = AsyncMock(
-        return_value=SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(valid_card)))]
-        )
-    )
+    fake_llm.run_inference = AsyncMock(return_value=json.dumps(valid_card))
 
     with patch(
         "api.services.knowledge_base.doc_card_extraction.create_llm_service_from_provider",
