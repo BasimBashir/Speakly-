@@ -423,6 +423,17 @@ async def execute_text_chat_pending_turn(
     llm = create_llm_service(user_config)
     inference_llm = llm
 
+    # Warm up LLM + embeddings in the background so the user's first
+    # message doesn't pay cold-start latency on a local-LLM setup.
+    from api.services.pipecat.service_warmup import schedule_pipeline_warmup
+
+    schedule_pipeline_warmup(
+        llm=llm,
+        inference_llm=None,
+        organization_id=workflow_run.workflow.organization_id,
+        created_by_user_id=workflow_run.workflow.user.id,
+    )
+
     runtime_configuration = {
         "llm_provider": user_config.llm.provider,
         "llm_model": user_config.llm.model,

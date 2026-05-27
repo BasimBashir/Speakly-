@@ -47,6 +47,7 @@ from api.services.pipecat.service_factory import (
     create_stt_service,
     create_tts_service,
 )
+from api.services.pipecat.service_warmup import schedule_pipeline_warmup
 from api.services.pipecat.tracing_config import (
     ensure_tracing,
 )
@@ -406,6 +407,20 @@ async def _run_pipeline(
         tts = create_tts_service(user_config, audio_config)
         llm = create_llm_service(user_config)
         inference_llm = None
+
+    # Warm up LLM + embeddings in the background so the user's first
+    # turn after the auto-greeting doesn't pay cold-start latency
+    # (KV cache alloc, CUDA graph capture for new prompt shapes, etc).
+    # Runs concurrently with the rest of pipeline setup; never blocks.
+    _warmup_user_id = (
+        workflow.user.id if getattr(workflow, "user", None) else None
+    )
+    schedule_pipeline_warmup(
+        llm=llm,
+        inference_llm=inference_llm,
+        organization_id=workflow.organization_id,
+        created_by_user_id=_warmup_user_id,
+    )
 
     # Stamp the providers/models actually resolved for this run onto
     # initial_context so they're available for post-call analytics
