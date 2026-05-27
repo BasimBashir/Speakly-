@@ -412,14 +412,13 @@ async def _run_pipeline(
     # turn after the auto-greeting doesn't pay cold-start latency
     # (KV cache alloc, CUDA graph capture for new prompt shapes, etc).
     # Runs concurrently with the rest of pipeline setup; never blocks.
-    _warmup_user_id = (
-        workflow.user.id if getattr(workflow, "user", None) else None
-    )
+    # Use the FK column (user_id) directly — accessing workflow.user here
+    # would trigger a lazy load against a detached session.
     schedule_pipeline_warmup(
         llm=llm,
         inference_llm=inference_llm,
         organization_id=workflow.organization_id,
-        created_by_user_id=_warmup_user_id,
+        created_by_user_id=getattr(workflow, "user_id", None),
     )
 
     # Stamp the providers/models actually resolved for this run onto
