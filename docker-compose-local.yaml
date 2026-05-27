@@ -58,10 +58,149 @@ services:
     networks:
       - app-network
 
+  # ===========================================================================
+  # Local model stack (NVIDIA GPU required)
+  # ===========================================================================
+  # Requires:
+  #   - NVIDIA GPU with >=24 GB VRAM (tested on RTX 3090)
+  #   - NVIDIA Container Toolkit installed in WSL2 / host
+  #   - ~25 GB free disk for first-start model downloads (cached in hf_cache)
+  #
+  # If you don't have a GPU, comment out the four services below and dograh
+  # will continue to work using the cloud Dograh MPS by default.
+  #
+  # First-start model downloads (one-time per host):
+  #   - Qwen3-32B-AWQ:           ~20 GB (vllm)
+  #   - BGE-M3:                  ~2.3 GB (embeddings)
+  #   - Kokoro-82M:              ~330 MB (kokoro, baked into image)
+  #   - Whisper Large v3:        ~3 GB (speaches, lazy-loaded on first request)
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # LLM — vLLM serving Qwen3 32B AWQ with native tool calling
+  # ---------------------------------------------------------------------------
+  vllm:
+    image: vllm/vllm-openai:latest
+    command:
+      - --model
+      - Qwen/Qwen3-32B-Instruct-AWQ
+      - --quantization
+      - awq
+      - --gpu-memory-utilization
+      - "0.62"
+      - --max-model-len
+      - "32768"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      - --reasoning-parser
+      - qwen3
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 600s  # vLLM cold-load can take several minutes
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ipc: host
+    networks:
+      - app-network
+
+  # ---------------------------------------------------------------------------
+  # Embeddings — Hugging Face TEI serving BGE-M3 (multilingual)
+  # ---------------------------------------------------------------------------
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+    command:
+      - --model-id
+      - BAAI/bge-m3
+      - --max-batch-tokens
+      - "16384"
+    ports:
+      - "127.0.0.1:8002:80"
+    volumes:
+      - hf_cache:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+
+  # ---------------------------------------------------------------------------
+  # TTS — Kokoro-FastAPI (OpenAI /v1/audio/speech compatible)
+  # ---------------------------------------------------------------------------
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    ports:
+      - "127.0.0.1:8003:8880"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8880/v1/audio/voices"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+
+  # ---------------------------------------------------------------------------
+  # STT — Speaches (faster-whisper, OpenAI /v1/audio/transcriptions compatible)
+  # ---------------------------------------------------------------------------
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cuda
+    ports:
+      - "127.0.0.1:8004:8000"
+    volumes:
+      - hf_cache:/home/ubuntu/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - app-network
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  hf_cache:
 
 networks:
   app-network:
