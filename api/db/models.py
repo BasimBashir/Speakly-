@@ -19,6 +19,7 @@ from sqlalchemy import (
     and_,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
 
 from api.constants import DEFAULT_CAMPAIGN_RETRY_CONFIG
@@ -1084,6 +1085,21 @@ class KnowledgeBaseDocumentModel(Base):
         Text, nullable=True
     )  # Stored when retrieval_mode is "full_document"
 
+    # Doc card / classification metadata
+    doc_type = Column(String(40), nullable=True)
+    intended_use = Column(
+        JSON, nullable=False, default=list, server_default=text("'[]'::json")
+    )
+    user_description = Column(Text, nullable=True)
+    doc_card = Column(JSON, nullable=True)
+    doc_card_extracted_at = Column(DateTime(timezone=True), nullable=True)
+    # topics is JSONB (not JSON) so we can attach a GIN index for fast
+    # containment queries (e.g. topics @> '["billing"]'). PostgreSQL's GIN
+    # access method has no default operator class for the json type.
+    topics = Column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+
     # Processing metadata
     source_url = Column(String, nullable=True)  # If document was fetched from URL
     total_chunks = Column(Integer, nullable=False, default=0)
@@ -1137,6 +1153,11 @@ class KnowledgeBaseDocumentModel(Base):
         Index("ix_kb_documents_uuid", "document_uuid"),
         Index("ix_kb_documents_status", "processing_status"),
         Index("ix_kb_documents_created_at", "created_at"),
+        Index(
+            "ix_kb_documents_topics_gin",
+            "topics",
+            postgresql_using="gin",
+        ),
     )
 
 
