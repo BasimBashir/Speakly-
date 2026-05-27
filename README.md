@@ -70,13 +70,21 @@ An honest comparison on the axes that matter most to teams evaluating voice AI p
 
 ## 🚀 Get Started
 
-##### Download and setup Dograh on your Local Machine
+### Option A — Windows one-click (recommended for local development)
 
-> **Note**
-> We collect anonymous usage data to improve the product. You can opt out by setting the `ENABLE_TELEMETRY` to `false` in the below command.
+Double-click `start.bat` in the repo root. It will:
 
-> **Note**
-> If you wish to run the platform on a remote server instead, checkout our [Documentation](https://docs.dograh.com/deployment/docker#option-2:-remote-server-deployment)
+1. Verify Node.js, Docker Desktop are installed and the Docker daemon is running
+2. Install `@devcontainers/cli` globally if missing (one-time)
+3. `devcontainer up --workspace-folder .` — brings up every container (postgres, redis, minio, workspace, plus the optional GPU model stack)
+4. Launch the backend in a console window (`bash scripts/start_services_dev.sh`)
+5. Launch the UI in another console window (`npm run dev -- --hostname 0.0.0.0`)
+6. Poll `http://localhost:8000/api/v1/health` until ready
+7. Open `http://127.0.0.1:3000` in your default browser
+
+First run pulls ~13 GB of images and model weights (15–30 min depending on connection). Subsequent runs start in under a minute — model weights are cached in Docker named volumes.
+
+### Option B — Quick Docker (no local development)
 
 ```bash
 curl -o docker-compose.yaml https://raw.githubusercontent.com/dograh-hq/dograh/main/docker-compose.yaml && REGISTRY=ghcr.io/dograh-hq ENABLE_TELEMETRY=true docker compose up --pull always
@@ -85,6 +93,12 @@ curl -o docker-compose.yaml https://raw.githubusercontent.com/dograh-hq/dograh/m
 > **Note**
 > First startup may take 2-3 minutes to download all images. Once running, open http://localhost:3010 to create your first AI voice assistant!
 > For common issues and solutions, see 🔧 **[Troubleshooting](docs/troubleshooting.md)**.
+
+> **Note**
+> We collect anonymous usage data to improve the product. You can opt out by setting `ENABLE_TELEMETRY` to `false`.
+
+> **Note**
+> If you wish to run the platform on a remote server instead, check our [Documentation](https://docs.dograh.com/deployment/docker#option-2:-remote-server-deployment).
 
 ### 🎙️ Your First Voice Bot
 
@@ -103,18 +117,40 @@ curl -o docker-compose.yaml https://raw.githubusercontent.com/dograh-hq/dograh/m
 - Custom Models: Bring your own TTS/STT models
 - Real-time Processing: Low-latency voice interactions
 
+### Knowledge Base & Document Intelligence
+
+- **Upload any document** (PDF, DOCX, XLSX, CSV, TXT) and have your agent reference it during calls
+- **Per-document AI summaries (DocCards)** — on upload, the system extracts a structured card (title, key facts, entities, FAQs, suggested agent uses, topics) so the agent knows what each doc contains without dumping the full text into every prompt
+- **Auto-built organization knowledge index** — a compact table of contents over all your docs is injected into the agent's system prompt at call start, scoped by inbound/outbound intent
+- **Chunked vector search or full-document retrieval** — pick per-document based on size and use case
+- **Model-agnostic extraction** — uses your configured LLM (Dograh hosted, OpenAI, Azure, OpenRouter, or local via vLLM/Ollama)
+
 ### Developer Experience
 
 - Zero Config Start: Auto-generated API keys for instant testing
 - Python-Based: Built on Python for easy customization
 - Docker-First: Containerized for consistent deployments
 - Modular Architecture: Swap components as needed
+- **Windows one-click launcher**: double-click `start.bat` to bring up everything
 
 ### Testing & Quality
 
 - **Test Mode**: Try your agent end-to-end before publishing, with no production calls or data affected
 - **In-Dashboard Web Calls**: Talk to your bot directly while building — no telephony setup required
 - **QA Node**: A built-in workflow node that analyzes prompt quality across your other nodes
+
+### Fully Local AI Stack (Optional, NVIDIA GPU)
+
+Run the entire AI stack on your own GPU instead of cloud services. With an RTX 3090 (24 GB) or similar, `start.bat` will bring up:
+
+| Component | Model | Container |
+|---|---|---|
+| LLM (with tool calling + MCP) | Qwen3-14B-AWQ | vLLM (`awq_marlin` kernel) |
+| Embeddings | BGE-M3 (1024-dim) | Hugging Face TEI |
+| TTS | Kokoro-82M (67 voices) | Kokoro-FastAPI |
+| STT | Faster Distil-Whisper Large v3 | Speaches |
+
+All four are OpenAI-compatible HTTP endpoints — configure them via the **Models** page in the UI. See [`docs/contribution/local-models.mdx`](docs/contribution/local-models.mdx) for the full setup and tuning guide.
 
 ## Deployment Options
 
