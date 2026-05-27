@@ -60,6 +60,13 @@ async def lifespan(app: FastAPI):
         sync_manager.register(
             WorkerSyncEventType.LANGFUSE_CREDENTIALS, handle_langfuse_sync
         )
+
+        from api.services.knowledge_base.org_index_cache import handle_kb_index_updated
+
+        sync_manager.register(
+            WorkerSyncEventType.KB_INDEX_UPDATED.value,
+            handle_kb_index_updated,
+        )
         await sync_manager.start()
         set_worker_sync_manager(sync_manager)
 
