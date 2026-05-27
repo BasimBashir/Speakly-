@@ -1,6 +1,7 @@
 """Database client for managing knowledge base documents and chunks."""
 
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -560,7 +561,6 @@ class KnowledgeBaseClient(BaseDBClient):
 
         topics is denormalized from doc_card['topics'] for GIN indexing.
         """
-        from datetime import UTC, datetime
         async with self.async_session() as session:
             query = select(KnowledgeBaseDocumentModel).where(
                 KnowledgeBaseDocumentModel.id == document_id
