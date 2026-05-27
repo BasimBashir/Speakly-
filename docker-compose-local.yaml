@@ -84,8 +84,11 @@ services:
     command:
       - --model
       - Qwen/Qwen3-14B-AWQ
+      # awq_marlin is the optimized kernel for AWQ-quantized weights on Ampere+
+      # (3090 is Ampere). ~3-5x faster generation than plain awq. vLLM logs
+      # "Detected that the model can run with awq_marlin" — we listened.
       - --quantization
-      - awq
+      - awq_marlin
       # 0.65 utilization (~15.6 GB of 24 GB on 3090). Qwen3-14B-AWQ weights
       # are 9.44 GiB; the rest is KV cache + CUDA graphs (~1 GiB) + vLLM
       # profiling overhead. Leaves ~8 GB of VRAM for the other GPU services
