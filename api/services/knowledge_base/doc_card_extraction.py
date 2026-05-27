@@ -7,6 +7,7 @@ the Dograh MPS default tier.
 """
 
 import os
+import random
 from typing import Optional
 
 from loguru import logger
@@ -113,10 +114,6 @@ async def extract_doc_card_for_document(document_id: int) -> Optional[DocCard]:
     llm = create_llm_service_from_provider(provider, model, api_key, **kwargs)
 
     card = await _call_and_validate(llm, user_prompt, repair_allowed=True)
-    if card is None:
-        raise RuntimeError(
-            f"DocCard extraction failed for document {document_id} after repair attempt"
-        )
 
     await db_client.update_doc_card(
         document_id=document_id,
@@ -127,9 +124,28 @@ async def extract_doc_card_for_document(document_id: int) -> Optional[DocCard]:
     return card
 
 
+def _build_repair_prompt(error: Exception) -> str:
+    return (
+        "Your previous response failed validation with this error:\n"
+        f"{error}\n\n"
+        "Return ONLY a valid JSON object matching this schema:\n"
+        "{\n"
+        '  "title": "string",\n'
+        '  "summary_150_words": "string (~150 words)",\n'
+        '  "key_facts": ["string", ...],\n'
+        '  "entities": { "people": [...], "organizations": [...], "products": [...], "locations": [...], "dates": [...] },\n'
+        '  "numbers_and_pricing": ["string", ...],\n'
+        '  "faqs": [{"q": "...", "a": "..."}, ...],\n'
+        '  "suggested_agent_uses": ["string", ...],\n'
+        '  "topics": ["lowercase-english-keyword", ...]\n'
+        "}\n\n"
+        "Use the same document content you analyzed before. Return ONLY the JSON object."
+    )
+
+
 async def _call_and_validate(
     llm, user_prompt: str, *, repair_allowed: bool
-) -> Optional[DocCard]:
+) -> DocCard:
     response = await llm.create_chat_completion(
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -143,13 +159,10 @@ async def _call_and_validate(
         return DocCard.model_validate(parsed)
     except (ValueError, ValidationError) as e:
         if not repair_allowed:
-            logger.error(f"DocCard extraction validation failed: {e}")
-            return None
-        repair_prompt = (
-            f"{user_prompt}\n\n"
-            f"Your previous response failed validation: {e}. "
-            "Return ONLY a valid JSON object matching the schema."
-        )
+            logger.error(f"DocCard extraction validation failed after repair: {e}")
+            raise RuntimeError("DocCard extraction failed after repair attempt") from e
+        logger.warning(f"DocCard extraction first attempt failed, retrying: {e}")
+        repair_prompt = _build_repair_prompt(error=e)
         return await _call_and_validate(llm, repair_prompt, repair_allowed=False)
 
 
@@ -173,7 +186,6 @@ async def _resolve_extraction_llm(
     model = llm_config.get("model", "default")
     api_key = llm_config.get("api_key")
     if isinstance(api_key, list):
-        import random
         api_key = random.choice(api_key)
 
     kwargs: dict = {}
