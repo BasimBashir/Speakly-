@@ -1,0 +1,2 @@
+Sample fixture document for end-to-end testing.
+It has a few sentences for the LLM to summarize.
