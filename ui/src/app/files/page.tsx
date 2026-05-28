@@ -79,14 +79,16 @@ export default function FilesPage() {
             </Card>
 
             <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
-                <DialogContent>
-                    <DialogHeader>
+                <DialogContent className="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+                    <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
                         <DialogTitle>Upload Document</DialogTitle>
                         <DialogDescription>
                             Upload a PDF or document file to add to your knowledge base
                         </DialogDescription>
                     </DialogHeader>
-                    <DocumentUpload onUploadSuccess={handleUploadSuccess} />
+                    <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+                        <DocumentUpload onUploadSuccess={handleUploadSuccess} />
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

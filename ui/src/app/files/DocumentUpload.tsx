@@ -295,7 +295,7 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
             value={userDescription}
             onChange={(e) => setUserDescription(e.target.value)}
             placeholder="Explain what this document contains and how the agent should use it (min 20 characters)"
-            className="min-h-20"
+            className="min-h-20 max-h-40 w-full resize-none break-words"
           />
           <div className="flex justify-end">
             <span
