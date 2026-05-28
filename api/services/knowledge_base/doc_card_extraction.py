@@ -7,7 +7,6 @@ the Dograh MPS default tier.
 """
 
 import os
-import random
 from typing import Optional
 
 from loguru import logger
@@ -16,6 +15,7 @@ from pydantic import ValidationError
 from opentelemetry import trace
 
 from api.db import db_client
+from api.services.knowledge_base.llm_resolution import resolve_kb_llm
 from pipecat.processors.aggregators.llm_context import LLMContext
 
 from api.schemas.doc_card import DocCard
@@ -76,7 +76,7 @@ async def extract_doc_card_for_document(document_id: int) -> Optional[DocCard]:
         )
         return None
 
-    provider, model, api_key, kwargs = await _resolve_extraction_llm(document.created_by)
+    provider, model, api_key, kwargs = await resolve_kb_llm(document.created_by)
     if provider != "dograh" and not api_key:
         await db_client.update_document_status(
             document_id,
@@ -200,39 +200,3 @@ async def _call_and_validate(
         logger.warning(f"DocCard extraction first attempt failed, retrying: {e}")
         repair_prompt = _build_repair_prompt(error=e)
         return await _call_and_validate(llm, repair_prompt, repair_allowed=False)
-
-
-async def _resolve_extraction_llm(
-    created_by_user_id: Optional[int],
-) -> tuple[str, str, Optional[str], dict]:
-    """Resolve (provider, model, api_key, kwargs) for the extraction call.
-
-    Mirrors resolve_user_llm_config in api/services/workflow/qa/llm_config.py.
-    Falls back to Dograh MPS default tier when user config is absent.
-    """
-    if not created_by_user_id:
-        return _dograh_default()
-
-    user_configuration = await db_client.get_user_configurations(created_by_user_id)
-    llm_config = user_configuration.model_dump(exclude_none=True).get("llm")
-    if not llm_config:
-        return _dograh_default()
-
-    provider = llm_config.get("provider", "dograh")
-    model = llm_config.get("model", "default")
-    api_key = llm_config.get("api_key")
-    if isinstance(api_key, list):
-        api_key = random.choice(api_key)
-
-    kwargs: dict = {}
-    if provider == "azure":
-        kwargs["endpoint"] = llm_config.get("endpoint", "")
-    elif provider in ("openrouter", "speaches") and llm_config.get("base_url"):
-        kwargs["base_url"] = llm_config["base_url"]
-
-    return provider, model, api_key, kwargs
-
-
-def _dograh_default() -> tuple[str, str, Optional[str], dict]:
-    tier = os.environ.get("KB_DOC_CARD_MODEL_TIER", "default")
-    return "dograh", tier, None, {}
