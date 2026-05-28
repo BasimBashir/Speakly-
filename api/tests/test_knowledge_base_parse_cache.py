@@ -1,7 +1,6 @@
 """Tests for the KB parse cache (Redis-backed)."""
 
 import json
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -87,3 +86,14 @@ async def test_set_swallows_redis_errors(monkeypatch):
     )
     # Should not raise.
     await set_cached_parse("abc123", {"full_text": "x", "chunks": [], "docling_metadata": {}})
+
+
+async def test_delete_swallows_redis_errors(monkeypatch):
+    async def boom():
+        raise RuntimeError("redis down")
+
+    monkeypatch.setattr(
+        "api.services.knowledge_base.parse_cache._get_redis", boom
+    )
+    # Should not raise.
+    await delete_cached_parse("abc123")
