@@ -1,0 +1,98 @@
+IN THE COURT OF APPEAL OF NEW SOUTH ARTEMIS
+APPELLATE DIVISION
+[2025] NSACA 117
+
+BETWEEN
+ORINOCO HOLDINGS LIMITED (Appellant)
+AND
+WESTBRIDGE TERMINAL SERVICES PTY LTD (Respondent)
+
+Coram: Justice Marlow (presiding), Justice Halloran, Justice Akinyemi
+Hearing: 14–16 January 2025
+Judgment delivered: 28 February 2025
+
+INTRODUCTION
+
+[1] This appeal concerns the proper construction of clauses 8.2 and 14 of a long-term storage and throughput agreement executed between the appellant, Orinoco Holdings Limited ("Orinoco"), and the respondent, Westbridge Terminal Services Pty Ltd ("Westbridge"), dated 3 March 2018 (the "Agreement"). The trial judge held that the indemnity in clause 14 was triggered notwithstanding a contemporaneous force majeure event, and awarded damages of $12,840,000 together with interest. Orinoco appeals on five grounds, principally that the indemnity does not extend to losses caused by the alleged force majeure, and that the trial judge erred in admitting expert evidence going to industry practice.
+
+[2] For the reasons that follow, we would allow the appeal in part, set aside the award of damages, and remit the question of quantum to the Commercial List for re-determination on the basis of the construction set out at [73] to [78] below.
+
+BACKGROUND FACTS
+
+[3] Orinoco operates a portfolio of agricultural commodity exporters principally focussed on bulk grain and meal. Westbridge owns and operates a deep-water storage and loading terminal at the Port of Cape Hartley. Under the Agreement, Westbridge agreed to receive, store, blend, and load onto vessels nominated by Orinoco a minimum guaranteed annual throughput of 850,000 metric tonnes of bulk grain. Orinoco agreed to a minimum payment ("take-or-pay") obligation calculated by reference to that throughput regardless of actual volumes loaded.
+
+[4] Between October 2022 and March 2023, a series of weather events, mechanical failures, and an industrial dispute resulted in the Cape Hartley terminal operating at reduced capacity. During this period, Orinoco redirected approximately 230,000 tonnes of contracted volume to a competing terminal operated by Albacore Storage Co. The redirected volume incurred substantially higher loading and demurrage costs.
+
+[5] Orinoco claimed reimbursement of the additional costs under the indemnity in clause 14 of the Agreement. Westbridge resisted the claim on three principal bases: first, that the events were within force majeure as defined in clause 8.2; second, that the indemnity in clause 14 was confined to "first-party losses" and did not extend to costs incurred under separate arrangements with third-party terminals; and third, that Orinoco had failed to give the contractually required notice within the cure period stipulated in clause 17.3.
+
+THE TRIAL JUDGMENT
+
+[6] The trial judge (Pereira J) accepted Orinoco's submission that clause 14 operated independently of the force majeure regime. Her Honour held that the indemnity was triggered whenever Westbridge failed to meet the minimum guaranteed throughput, irrespective of cause. The force majeure regime, the trial judge concluded, only relieved Westbridge of liability for default per se; it did not cap or eliminate the separate indemnity obligation.
+
+[7] On the second point, the trial judge held that clause 14 was broad enough to capture incremental costs incurred in mitigation, including amounts paid to alternative terminals. Her Honour rejected the submission that the words "actual loss arising directly from the failure" should be confined to losses incurred under the Agreement itself.
+
+[8] On the third point, the trial judge found that the notice was effective. She held that the email of 11 November 2022 from Orinoco's commercial counsel to Westbridge's terminal manager, although not in the form prescribed in Schedule 6, substantially complied with the notice requirements and identified the alleged failure and the proposed cure.
+
+[9] Damages were calculated by reference to the difference between the contractual loading fee and the actual loading fees paid to Albacore Storage Co., together with associated demurrage and increased insurance premiums.
+
+GROUNDS OF APPEAL
+
+[10] Orinoco — for clarity, the appellant in this appeal is Orinoco; we record this because the alignment of the parties at first instance was the reverse, Orinoco having been the claimant. Orinoco — appeals on five grounds:
+
+(a) The trial judge erred in construing clause 14 as operating independently of clause 8.2.
+(b) The trial judge erred in finding that "actual loss arising directly from the failure" included third-party mitigation costs.
+(c) The trial judge erred in finding substantial compliance with the notice provisions in clause 17.3 and Schedule 6.
+(d) The trial judge erred in admitting and relying upon the evidence of Dr Hennings, who was tendered as an expert in international port terminal practice, in circumstances where the asserted custom was inconsistent with the express terms of the Agreement.
+(e) The trial judge erred in her assessment of quantum, in particular by failing to deduct sums that Orinoco saved by routing through Albacore.
+
+THE CONSTRUCTION QUESTION
+
+[11] We begin with the construction question, because the resolution of grounds (a) and (b) determines the structure of the analysis on the remaining grounds.
+
+[12] Clause 8.2 of the Agreement is in the following terms:
+
+"Force Majeure. Neither party shall be liable to the other for any failure to perform any obligation under this Agreement (other than an obligation to pay money) where such failure is caused by an event of Force Majeure, being any event beyond the reasonable control of the affected party, including but not limited to acts of God, severe weather, fire, flood, earthquake, war, terrorism, civil disturbance, strikes, lockouts, industrial action, acts of any governmental authority, and any failure of essential infrastructure not caused by the affected party's negligence. The affected party shall give written notice to the other within seven (7) days of the commencement of the event and shall use reasonable endeavours to mitigate the effects."
+
+[13] Clause 14, on which the indemnity claim rests, reads:
+
+"Indemnity. Westbridge shall indemnify Orinoco against any actual loss arising directly from the failure of Westbridge to receive, store, blend, or load grain in accordance with the minimum guaranteed throughput obligations in clause 5, save and except where such failure is caused by an event of Force Majeure or by an act or omission of Orinoco."
+
+[14] In our respectful view, the trial judge's construction is not sustainable. The plain words of clause 14, in particular the phrase "save and except where such failure is caused by an event of Force Majeure", carve out from the scope of the indemnity any failure caused by a force majeure event. The two clauses are not parallel and independent regimes; they are interlinked. To read clause 14 as imposing an indemnity obligation that survives a force majeure event is to do violence to the express words of the carve-out.
+
+[15] We were referred to a substantial body of authority on the construction of indemnities in long-term commercial agreements, including Pinnacle Logistics v Marshal Bay Storage Ltd [2018] NSACA 92, Iberian Bulk SA v Cape Hartley Port Authority [2021] NSACA 41, and the decision of the High Court in Triton Bay Industries v Comollo (2019) 269 NSACR 318. We do not think those authorities, taken together, support the construction adopted by the trial judge. To the contrary, the predominant theme of the cases is that an indemnity must be construed by reference to the precise words used, and that an express carve-out is to be given its natural effect.
+
+THE MITIGATION-COSTS QUESTION
+
+[16] The next question is whether, on the proper construction of clause 14, the indemnity (when it does apply) extends to costs incurred under separate mitigation arrangements with third-party terminals. Although our conclusion on the force majeure point removes the need to answer this question in respect of the specific events between October 2022 and March 2023, the question is squarely raised and may recur in future quantum determinations. We therefore record our view briefly.
+
+[17] The words "actual loss arising directly from the failure" are not, in our view, confined to losses incurred under the Agreement itself. A reasonable business person reading clause 14 in the context of a long-term throughput agreement of this kind would expect that the indemnity would cover, among other things, additional costs reasonably incurred to obtain the contracted service from an alternative provider. To hold otherwise would render the indemnity largely commercially inoperative in the very scenarios for which it is most plainly intended.
+
+[18] We therefore reject ground (b) of the appeal, while emphasising that the question of whether any particular cost is "actually" and "directly" incurred remains a factual question to be assessed on the evidence in any future proceeding.
+
+THE NOTICE QUESTION
+
+[19] Ground (c) concerns the operation of clause 17.3 and Schedule 6, which prescribe a specific form of notice that the indemnified party must give before the indemnity is enlivened. The notice provisions are detailed and include service requirements (registered post or hand delivery), addressee requirements (a named officer of the indemnifying party), and content requirements (a precise statement of the alleged failure and a proposed cure period of not less than 14 days).
+
+[20] The trial judge found that the email of 11 November 2022, while non-compliant in form, was substantially compliant. We respectfully disagree. The notice provisions in long-term commercial agreements of this kind are not mere formalities; they serve a substantive function, ensuring that the indemnifying party has clear notice of the alleged failure and an opportunity to cure. Strict compliance is the rule, save where the language of the clause itself expressly admits of substantial compliance.
+
+[21] Clause 17.3 contains no such express admission. We would therefore allow ground (c) of the appeal. However, because we have already determined the appeal on ground (a), and because Westbridge did not press the notice point as a separate basis for setting aside the award (preferring to rest its appeal on the construction question), we do not need to reach a final conclusion on this ground.
+
+THE EXPERT EVIDENCE QUESTION
+
+[22] Ground (d) concerns the admission of expert evidence from Dr Anneliese Hennings, a recognised international authority on port terminal operations. Dr Hennings gave evidence that, in international practice, a force majeure event of more than 90 days' continuous duration is treated as terminating the throughput guarantee, and that any subsequent claim under an indemnity such as clause 14 would be limited to costs incurred during the first 90 days. The trial judge admitted this evidence over Westbridge's objection and relied on it in support of her construction of the indemnity.
+
+[23] We consider that the trial judge erred in admitting this evidence. The expert evidence was directed to a question of contractual construction, which is a question of law for the court. Industry custom is admissible to inform the meaning of ambiguous contractual language, but it cannot displace the express words of an agreement. Here, the express words of clauses 8.2 and 14 admit of no ambiguity that requires the supplementing of industry practice.
+
+[24] Ground (d) is therefore allowed. The trial judge's reliance on Dr Hennings's evidence reinforces, rather than detracts from, the conclusion that the construction adopted at first instance cannot stand.
+
+QUANTUM
+
+[25] In light of our conclusions on grounds (a) and (b), the question of quantum requires re-determination. The trial judge calculated damages on the assumption that the entire 230,000 tonnes of redirected volume gave rise to recoverable losses. On the construction we have adopted, no losses arising from the force majeure period are recoverable. The remitted determination will need to identify, on the evidence, what (if any) portion of the redirected volume was attributable to events that fall outside the force majeure regime.
+
+[26] We have considered whether to undertake the quantum determination ourselves, but the evidentiary record is incomplete for that purpose. The matter is therefore remitted to the Commercial List.
+
+DISPOSITION
+
+[27] The appeal is allowed in part. The award of damages is set aside. The matter is remitted to the Commercial List for re-determination of quantum on the basis of these reasons. The respondent is to pay the appellant's costs of the appeal on the ordinary basis, to be assessed if not agreed.
+
+[28] Orders accordingly.
