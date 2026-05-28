@@ -1,9 +1,11 @@
 """API routes for knowledge base operations."""
 
+import os
+import tempfile
 import uuid
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from loguru import logger
 
 from api.db import db_client
@@ -11,6 +13,7 @@ from api.enums import PostHogEvent
 from api.schemas.knowledge_base import (
     ChunkSearchRequestSchema,
     ChunkSearchResponseSchema,
+    DescribePreviewResponseSchema,
     DocumentListResponseSchema,
     DocumentResponseSchema,
     DocumentUploadRequestSchema,
@@ -20,6 +23,10 @@ from api.schemas.knowledge_base import (
 )
 from api.sdk_expose import sdk_expose
 from api.services.auth.depends import get_user
+from api.services.knowledge_base.describe_preview import (
+    DescribePreviewError,
+    generate_description_preview,
+)
 from api.services.posthog_client import capture_event
 from api.services.storage import storage_fs
 from api.tasks.arq import enqueue_job
@@ -553,3 +560,72 @@ async def search_chunks(
     except Exception as exc:
         logger.error(f"Error searching chunks: {exc}")
         raise HTTPException(status_code=500, detail="Failed to search chunks") from exc
+
+
+DESCRIBE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
+DESCRIBE_PREVIEW_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".json"}
+
+
+@router.post(
+    "/describe-preview",
+    response_model=DescribePreviewResponseSchema,
+    summary="Auto-draft a description for an uploaded document",
+)
+async def describe_preview(
+    file: UploadFile = File(...),
+    doc_type: Optional[str] = Form(default=None),
+    intended_use: Optional[List[str]] = Form(default=None),
+    user=Depends(get_user),
+):
+    """Generate a draft 'Describe this document' string via the LLM.
+
+    The file is parsed once via MPS; the parse is cached for 30 minutes
+    keyed by sha256 so the eventual Upload & Process reuses it. No DB
+    record is created here.
+
+    Access Control:
+    * Authenticated users only. No org scoping needed — nothing is persisted.
+    """
+    filename = file.filename or "upload"
+    extension = os.path.splitext(filename)[1].lower()
+    if extension not in DESCRIBE_PREVIEW_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported file type. Allowed: "
+                + ", ".join(sorted(DESCRIBE_PREVIEW_ALLOWED_EXTENSIONS))
+            ),
+        )
+
+    content = await file.read()
+    if len(content) > DESCRIBE_PREVIEW_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="File exceeds 5 MB limit")
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=extension)
+    try:
+        tmp.write(content)
+        tmp.close()
+
+        try:
+            result = await generate_description_preview(
+                file_path=tmp.name,
+                filename=filename,
+                mime_type=file.content_type or "application/octet-stream",
+                doc_type=doc_type,
+                intended_use=intended_use,
+                user_id=user.id,
+                organization_id=user.selected_organization_id,
+                created_by_provider_id=str(user.provider_id),
+            )
+        except DescribePreviewError as exc:
+            raise HTTPException(status_code=502, detail=exc.code) from exc
+
+        return DescribePreviewResponseSchema(
+            description=result.description,
+            from_cache=result.from_cache,
+        )
+    finally:
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass

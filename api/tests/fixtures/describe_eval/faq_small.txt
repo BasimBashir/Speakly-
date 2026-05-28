@@ -1,0 +1,31 @@
+NorthStar Coffee Subscription — FAQ
+
+Q: How does the subscription work?
+A: You pick a roast (light, medium, dark) and a frequency (weekly, biweekly, monthly). We grind fresh and ship the next business day.
+
+Q: Can I pause or skip a shipment?
+A: Yes. Log in, go to "My Subscription," and choose Pause or Skip. You can also do this from the order email.
+
+Q: What's your return policy?
+A: If the bag is unopened, mail it back within 14 days for a full refund. If the bag is opened, we'll issue store credit if the coffee was defective.
+
+Q: Where do you ship?
+A: Continental US only. We do not ship to Alaska, Hawaii, or international addresses.
+
+Q: How is shipping priced?
+A: Free for orders over $40, otherwise a flat $5.
+
+Q: Do you offer gift subscriptions?
+A: Yes — a 3-month or 6-month prepaid plan. The recipient gets a welcome email with their first ship date.
+
+Q: How do I change my shipping address?
+A: Update it in account settings at least 48 hours before your next ship date.
+
+Q: Is the coffee fair-trade certified?
+A: All single-origin lots are Fair Trade Certified. Our blends are sourced direct-trade.
+
+Q: How do I cancel?
+A: Cancel anytime from "My Subscription." There are no cancellation fees.
+
+Q: Who do I email for help?
+A: support@northstarcoffee.example with your order number.

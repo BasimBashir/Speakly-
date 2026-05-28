@@ -143,7 +143,7 @@ async def test_non_dograh_provider_without_api_key_is_skipped(db_session):
         return ("openai", "gpt-4.1", None, {})
 
     with patch(
-        "api.services.knowledge_base.doc_card_extraction._resolve_extraction_llm",
+        "api.services.knowledge_base.doc_card_extraction.resolve_kb_llm",
         side_effect=fake_resolve,
     ):
         card = await extract_doc_card_for_document(doc.id)

@@ -274,6 +274,24 @@ export type BatchRecordingUploadResponseSchema = {
 };
 
 /**
+ * Body_describe_preview_api_v1_knowledge_base_describe_preview_post
+ */
+export type BodyDescribePreviewApiV1KnowledgeBaseDescribePreviewPost = {
+    /**
+     * File
+     */
+    file: Blob | File;
+    /**
+     * Doc Type
+     */
+    doc_type?: string | null;
+    /**
+     * Intended Use
+     */
+    intended_use?: Array<string> | null;
+};
+
+/**
  * Body_transcribe_audio_api_v1_workflow_recordings_transcribe_post
  */
 export type BodyTranscribeAudioApiV1WorkflowRecordingsTranscribePost = {
@@ -1302,6 +1320,26 @@ export type DefaultConfigurationsResponse = {
     default_providers: {
         [key: string]: string;
     };
+};
+
+/**
+ * DescribePreviewResponseSchema
+ *
+ * Response schema for the auto-describe preview endpoint.
+ */
+export type DescribePreviewResponseSchema = {
+    /**
+     * Description
+     *
+     * LLM-drafted description of the document
+     */
+    description: string;
+    /**
+     * From Cache
+     *
+     * True if the underlying parse came from the Redis cache
+     */
+    from_cache: boolean;
 };
 
 /**
@@ -10715,6 +10753,45 @@ export type SearchChunksApiV1KnowledgeBaseSearchPostResponses = {
 };
 
 export type SearchChunksApiV1KnowledgeBaseSearchPostResponse = SearchChunksApiV1KnowledgeBaseSearchPostResponses[keyof SearchChunksApiV1KnowledgeBaseSearchPostResponses];
+
+export type DescribePreviewApiV1KnowledgeBaseDescribePreviewPostData = {
+    body: BodyDescribePreviewApiV1KnowledgeBaseDescribePreviewPost;
+    headers?: {
+        /**
+         * Authorization
+         */
+        authorization?: string | null;
+        /**
+         * X-Api-Key
+         */
+        'X-API-Key'?: string | null;
+    };
+    path?: never;
+    query?: never;
+    url: '/api/v1/knowledge-base/describe-preview';
+};
+
+export type DescribePreviewApiV1KnowledgeBaseDescribePreviewPostErrors = {
+    /**
+     * Not found
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DescribePreviewApiV1KnowledgeBaseDescribePreviewPostError = DescribePreviewApiV1KnowledgeBaseDescribePreviewPostErrors[keyof DescribePreviewApiV1KnowledgeBaseDescribePreviewPostErrors];
+
+export type DescribePreviewApiV1KnowledgeBaseDescribePreviewPostResponses = {
+    /**
+     * Successful Response
+     */
+    200: DescribePreviewResponseSchema;
+};
+
+export type DescribePreviewApiV1KnowledgeBaseDescribePreviewPostResponse = DescribePreviewApiV1KnowledgeBaseDescribePreviewPostResponses[keyof DescribePreviewApiV1KnowledgeBaseDescribePreviewPostResponses];
 
 export type GetUploadUrlsApiV1WorkflowRecordingsUploadUrlPostData = {
     body: BatchRecordingUploadRequestSchema;

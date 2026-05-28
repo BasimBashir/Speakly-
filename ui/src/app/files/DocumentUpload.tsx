@@ -1,10 +1,11 @@
 'use client';
 
-import { FileText, Info, Upload, X } from 'lucide-react';
+import { FileText, Info, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
+  describePreviewApiV1KnowledgeBaseDescribePreviewPost,
   getUploadUrlApiV1KnowledgeBaseUploadUrlPost,
   processDocumentApiV1KnowledgeBaseProcessDocumentPost,
 } from '@/client/sdk.gen';
@@ -57,6 +58,8 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [dragActive, setDragActive] = useState(false);
+  const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
+  const [descriptionGenerated, setDescriptionGenerated] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const intendedUseSelected = intendedUse.inbound || intendedUse.outbound;
@@ -109,8 +112,49 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
     setDocType('');
     setIntendedUse({ inbound: false, outbound: false });
     setUserDescription('');
+    setDescriptionGenerated(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const handleAutoDescribe = async () => {
+    if (!selectedFile) return;
+    setIsGeneratingDescription(true);
+    try {
+      const response = await describePreviewApiV1KnowledgeBaseDescribePreviewPost({
+        body: {
+          file: selectedFile,
+          doc_type: docType || undefined,
+          intended_use:
+            intendedUse.inbound || intendedUse.outbound
+              ? [
+                  ...(intendedUse.inbound ? ['inbound'] : []),
+                  ...(intendedUse.outbound ? ['outbound'] : []),
+                ]
+              : undefined,
+        },
+      });
+      if (response.error || !response.data) {
+        const detail =
+          (response.error as { detail?: string } | undefined)?.detail ?? 'unknown_error';
+        const message =
+          detail === 'parse_failed'
+            ? "Couldn't read the document. Try writing a description manually."
+            : detail === 'llm_failed'
+              ? 'Auto-describe failed — please write one yourself.'
+              : 'Could not generate description.';
+        toast.error(message);
+        return;
+      }
+      setUserDescription(response.data.description);
+      setDescriptionGenerated(true);
+      toast.success('Description generated');
+    } catch (error) {
+      logger.error('Auto-describe failed:', error);
+      toast.error('Could not generate description.');
+    } finally {
+      setIsGeneratingDescription(false);
     }
   };
 
@@ -288,14 +332,35 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
 
         {/* Description */}
         <div className="space-y-2">
-          <Label className="text-sm font-medium">
-            Describe this document <span className="text-destructive">*</span>
-          </Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-sm font-medium">
+              Describe this document <span className="text-destructive">*</span>
+            </Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              disabled={!selectedFile || isGeneratingDescription}
+              onClick={handleAutoDescribe}
+            >
+              {isGeneratingDescription ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Sparkles className="h-3 w-3" />
+              )}
+              {isGeneratingDescription
+                ? 'Generating…'
+                : descriptionGenerated
+                  ? 'Regenerate'
+                  : 'Auto-write'}
+            </Button>
+          </div>
           <Textarea
             value={userDescription}
             onChange={(e) => setUserDescription(e.target.value)}
             placeholder="Explain what this document contains and how the agent should use it (min 20 characters)"
-            className="min-h-20"
+            className="min-h-20 max-h-40 w-full resize-none break-words"
           />
           <div className="flex justify-end">
             <span

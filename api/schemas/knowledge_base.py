@@ -133,3 +133,13 @@ class EditDocumentRequestSchema(BaseModel):
     doc_type: Optional[str] = Field(default=None, min_length=1)
     intended_use: Optional[List[str]] = Field(default=None, min_length=1)
     user_description: Optional[str] = Field(default=None, min_length=20)
+
+
+class DescribePreviewResponseSchema(BaseModel):
+    """Response schema for the auto-describe preview endpoint."""
+
+    description: str = Field(..., description="LLM-drafted description of the document")
+    from_cache: bool = Field(
+        ...,
+        description="True if the underlying parse came from the Redis cache",
+    )
