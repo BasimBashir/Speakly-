@@ -14,6 +14,11 @@ from api.db import db_client
 from api.db.models import KnowledgeBaseChunkModel
 from api.services.gen_ai import OpenAIEmbeddingService
 from api.services.mps_service_key_client import mps_service_key_client
+from api.services.knowledge_base.parse_cache import (
+    delete_cached_parse,
+    get_cached_parse,
+    set_cached_parse,
+)
 from api.services.storage import storage_fs
 
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
@@ -148,16 +153,25 @@ async def process_knowledge_base_document(
             mime_type=mime_type,
         )
 
-        logger.info(f"Delegating document processing to MPS (mode={retrieval_mode})")
-        mps_response = await mps_service_key_client.process_document(
-            file_path=temp_file_path,
-            filename=filename,
-            content_type=mime_type or "application/octet-stream",
-            retrieval_mode=retrieval_mode,
-            max_tokens=max_tokens,
-            organization_id=organization_id,
-            created_by=created_by_provider_id,
-        )
+        mps_response = await get_cached_parse(file_hash)
+        if mps_response is not None:
+            logger.info(
+                f"Reusing cached MPS parse for document {document_id} (hash={file_hash[:12]}...)"
+            )
+            await delete_cached_parse(file_hash)
+        else:
+            logger.info(
+                f"Delegating document processing to MPS (mode={retrieval_mode})"
+            )
+            mps_response = await mps_service_key_client.process_document(
+                file_path=temp_file_path,
+                filename=filename,
+                content_type=mime_type or "application/octet-stream",
+                retrieval_mode=retrieval_mode,
+                max_tokens=max_tokens,
+                organization_id=organization_id,
+                created_by=created_by_provider_id,
+            )
 
         docling_metadata = mps_response.get("docling_metadata", {})
 

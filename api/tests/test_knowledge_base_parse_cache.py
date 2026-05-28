@@ -97,3 +97,83 @@ async def test_delete_swallows_redis_errors(monkeypatch):
     )
     # Should not raise.
     await delete_cached_parse("abc123")
+
+
+import hashlib
+from unittest.mock import AsyncMock, MagicMock
+
+from api.tasks import knowledge_base_processing
+
+
+async def test_worker_reuses_cached_parse_and_deletes_key(
+    fake_redis, tmp_path, monkeypatch
+):
+    """When kb:parse:{hash} exists, worker must NOT call MPS, then delete the key."""
+    # Build a tiny temp file the worker will treat as the downloaded S3 object.
+    file_bytes = b"hello world"
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    cached_payload = {
+        "mode": "full_document",
+        "docling_metadata": {"pages": 1},
+        "full_text": "Hello world cached.",
+        "chunks": [],
+    }
+    await knowledge_base_processing.set_cached_parse(file_hash, cached_payload)
+
+    # Patch the worker's collaborators.
+    async def fake_download(s3_key, target_path):
+        with open(target_path, "wb") as fh:
+            fh.write(file_bytes)
+        return True
+
+    fake_doc = MagicMock(id=42, created_by=None, organization_id=7, retrieval_mode="full_document")
+    monkeypatch.setattr(knowledge_base_processing.storage_fs, "adownload_file", fake_download)
+    monkeypatch.setattr(
+        knowledge_base_processing.db_client,
+        "update_document_status",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        knowledge_base_processing.db_client,
+        "update_document_metadata",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        knowledge_base_processing.db_client,
+        "get_document_by_hash",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        knowledge_base_processing.db_client,
+        "get_document_by_id",
+        AsyncMock(return_value=fake_doc),
+    )
+    monkeypatch.setattr(
+        knowledge_base_processing.db_client,
+        "update_document_full_text",
+        AsyncMock(),
+    )
+    mps_mock = AsyncMock()
+    monkeypatch.setattr(
+        knowledge_base_processing.mps_service_key_client,
+        "process_document",
+        mps_mock,
+    )
+    monkeypatch.setattr(
+        knowledge_base_processing,
+        "_enqueue_doc_card_extraction",
+        AsyncMock(),
+    )
+
+    await knowledge_base_processing.process_knowledge_base_document(
+        ctx={},
+        document_id=42,
+        s3_key="knowledge_base/7/abc/file.txt",
+        organization_id=7,
+        created_by_provider_id="user-1",
+        retrieval_mode="full_document",
+    )
+
+    mps_mock.assert_not_called()
+    # Cache key should be gone after reuse.
+    assert await knowledge_base_processing.get_cached_parse(file_hash) is None
