@@ -119,18 +119,28 @@ def build_prompt_s3_fewshot(
 
 
 # ---------------------------------------------------------------------------
-# Public selector — bound to the winner after Task 6
+# Public selector — pinned to S2 (structured → narrative) after the
+# 2026-05-28 eval. See docs/superpowers/specs/2026-05-28-describe-eval-results.md
+# for scores and reasoning.
 # ---------------------------------------------------------------------------
 
-# NOTE: Updated in Task 6 to point at the winning strategy.
-# Until then, the route is not wired up, so this default is unused at runtime.
+
 def build_describe_prompt(
     document_text: str,
     doc_type: Optional[str],
     intended_use: Optional[Iterable[str]],
 ) -> str:
-    """Build the user prompt for the auto-describe LLM call.
+    """Build the FIRST-step user prompt for the auto-describe LLM call.
 
-    Wired to the winning strategy in Task 6.
+    Winner: S2 (structured → narrative). The strategy is two-call:
+        1. LLM call with build_describe_prompt(...) → JSON profile.
+        2. LLM call with build_describe_prompt_step2(profile_json) → prose.
+
+    Callers must run both steps in sequence.
     """
-    return build_prompt_s1_direct(document_text, doc_type, intended_use)
+    return build_prompt_s2_step1_profile(document_text, doc_type, intended_use)
+
+
+def build_describe_prompt_step2(profile_json: str) -> str:
+    """Build the SECOND-step user prompt; consumes JSON from step 1."""
+    return build_prompt_s2_step2_narrative(profile_json)
