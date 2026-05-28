@@ -139,7 +139,14 @@ async def compose_system_prompt_for_node(
     if has_recordings and "RECORDING_ID:" in formatted_node_prompt:
         parts.append(RECORDING_RESPONSE_MODE_INSTRUCTIONS)
 
-    if organization_id is not None:
+    # Only inject the <organization_knowledge> block on nodes where the
+    # retrieve_from_knowledge_base tool is actually registered (i.e. nodes
+    # with documents attached). Otherwise the prompt instructs the model
+    # to call a tool that isn't in its tool list, and the model hallucinates
+    # the call -- producing a "function not currently available" reply that
+    # the user sees as "I don't have access to that information." See
+    # pipecat_engine.py:521 for the matching tool-registration gate.
+    if organization_id is not None and node.document_uuids:
         include_index = getattr(node, "include_kb_index", True)
         kb_section = await compose_kb_index_section(
             organization_id=organization_id,
