@@ -89,19 +89,26 @@ services:
       # "Detected that the model can run with awq_marlin" — we listened.
       - --quantization
       - awq_marlin
-      # 0.65 utilization (~15.6 GB of 24 GB on 3090). Qwen3-14B-AWQ weights
-      # are 9.44 GiB; the rest is KV cache + CUDA graphs (~1 GiB) + vLLM
-      # profiling overhead. Leaves ~8 GB of VRAM for the other GPU services
-      # (TEI + Kokoro + Speaches ≈ 4 GB) plus OS/driver overhead.
+      # 0.72 utilization (~17.3 GB of 24 GB on 3090). Qwen3-14B-AWQ weights
+      # are 9.44 GiB; the rest is KV cache (~2.8 GiB at 16K) + CUDA graphs
+      # (~1 GiB) + vLLM profiling overhead. Leaves ~6 GB of VRAM for the
+      # other GPU services (TEI + Kokoro + Speaches ≈ 4 GB) plus driver
+      # overhead.
+      #
+      # Bumped from 0.65 → 0.72 to fit 16K KV cache, which is needed because
+      # full_document KB retrievals dump entire docs into context. Two such
+      # retrievals in one conversation easily exceeded the old 8K limit.
       #
       # Qwen3-32B-AWQ would not fit with the other services on a 24 GB card
       # — its 18.24 GB weights alone leave no KV cache room.
       - --gpu-memory-utilization
-      - "0.65"
-      # 8K context is plenty for voice agent turns and DocCard extraction.
-      # 16K KV cache (2.5 GiB) was too tight on the remaining ~1.15 GiB.
+      - "0.72"
+      # 16K context fits ~2 full_document KB retrievals plus history. If
+      # you regularly attach >2 large docs per node, switch those docs to
+      # chunked retrieval mode (top-K chunks) instead of bumping context
+      # further — 32K would push past the 24 GB card's headroom.
       - --max-model-len
-      - "8192"
+      - "16384"
       - --enable-auto-tool-choice
       # Qwen3-14B-AWQ emits Hermes-style `<tool_call>{...}</tool_call>` blocks.
       # The `qwen3_coder` parser is for the Qwen3-Coder variant (different
