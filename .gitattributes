@@ -23,3 +23,13 @@
 *.gz binary
 *.whl binary
 *.pyc binary
+
+# Auto-generated OpenAPI client. Always regenerate after merging upstream;
+# never hand-resolve conflicts. merge=union avoids spurious conflicts when
+# both sides add adjacent type/method entries.
+ui/src/client/index.ts merge=union
+ui/src/client/sdk.gen.ts merge=union
+ui/src/client/types.gen.ts merge=union
+ui/src/client/client.gen.ts merge=union
+sdk/python/src/dograh_sdk/_generated_models.py merge=union
+sdk/typescript/src/_generated_models.ts merge=union
