@@ -103,10 +103,16 @@ services:
       - --max-model-len
       - "8192"
       - --enable-auto-tool-choice
+      # Qwen3-14B-AWQ emits Hermes-style `<tool_call>{...}</tool_call>` blocks.
+      # The `qwen3_coder` parser is for the Qwen3-Coder variant (different
+      # format) — wrong here, leaves tool calls as raw text in `content` and
+      # the chat UI shows nothing.
       - --tool-call-parser
-      - qwen3_coder
-      - --reasoning-parser
-      - qwen3
+      - hermes
+      # Thinking is disabled per-request via chat_template_kwargs.enable_thinking
+      # (see api/services/pipecat/service_factory.py). Without the reasoning
+      # parser, vLLM returns plain `content`, which is what pipecat's OpenAI
+      # client streams to the chat UI.
     ports:
       - "127.0.0.1:8001:8000"
     volumes:

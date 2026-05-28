@@ -588,10 +588,21 @@ def create_llm_service_from_provider(
     elif provider == ServiceProviders.SPEACHES.value:
         base_url = base_url or "http://localhost:11434/v1"
         _validate_runtime_service_url(base_url, "base_url")
+        # Qwen3-* defaults to thinking mode, which on a real-time chat use case
+        # spends the entire completion budget inside <think> blocks and emits
+        # empty `content`. vLLM honors `chat_template_kwargs.enable_thinking`
+        # per request; the OpenAI SDK forwards `extra_body` into the JSON body.
         return SpeachesLLMService(
             base_url=base_url,
             api_key=api_key or "none",
-            settings=SpeachesLLMSettings(model=model),
+            settings=SpeachesLLMSettings(
+                model=model,
+                extra={
+                    "extra_body": {
+                        "chat_template_kwargs": {"enable_thinking": False}
+                    }
+                },
+            ),
         )
     elif provider == ServiceProviders.MINIMAX.value:
         base_url = base_url or "https://api.minimax.io/v1"
