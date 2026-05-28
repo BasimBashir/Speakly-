@@ -614,6 +614,8 @@ async def describe_preview(
                 doc_type=doc_type,
                 intended_use=intended_use,
                 user_id=user.id,
+                organization_id=user.selected_organization_id,
+                created_by_provider_id=str(user.provider_id),
             )
         except DescribePreviewError as exc:
             raise HTTPException(status_code=502, detail=exc.code) from exc

@@ -68,6 +68,8 @@ async def test_cache_miss_calls_mps_caches_and_returns_description(patch_collabo
         doc_type="faq",
         intended_use=["inbound"],
         user_id=42,
+        organization_id=7,
+        created_by_provider_id="user-1",
     )
 
     assert "agent" in result.description.lower()
@@ -97,6 +99,8 @@ async def test_cache_hit_skips_mps(patch_collaborators, tmp_path):
         doc_type="faq",
         intended_use=["inbound"],
         user_id=42,
+        organization_id=7,
+        created_by_provider_id="user-1",
     )
 
     assert result.from_cache is True
@@ -117,6 +121,8 @@ async def test_llm_failure_raises_describe_preview_error(patch_collaborators, tm
             doc_type=None,
             intended_use=None,
             user_id=42,
+            organization_id=7,
+            created_by_provider_id="user-1",
         )
     assert exc.value.code == "llm_failed"
 
@@ -134,6 +140,8 @@ async def test_mps_failure_raises_describe_preview_error(patch_collaborators, tm
             doc_type=None,
             intended_use=None,
             user_id=42,
+            organization_id=7,
+            created_by_provider_id="user-1",
         )
     assert exc.value.code == "parse_failed"
 
@@ -157,5 +165,27 @@ async def test_empty_document_text_raises_parse_failed(patch_collaborators, tmp_
             doc_type=None,
             intended_use=None,
             user_id=42,
+            organization_id=7,
+            created_by_provider_id="user-1",
         )
     assert exc.value.code == "parse_failed"
+
+
+async def test_forwards_org_and_created_by_to_mps(patch_collaborators, tmp_path):
+    file_path = tmp_path / "doc.txt"
+    file_path.write_bytes(b"hello body")
+
+    await describe_preview.generate_description_preview(
+        file_path=str(file_path),
+        filename="doc.txt",
+        mime_type="text/plain",
+        doc_type=None,
+        intended_use=None,
+        user_id=42,
+        organization_id=7,
+        created_by_provider_id="user-xyz",
+    )
+
+    call = patch_collaborators["mps_mock"].await_args
+    assert call.kwargs["organization_id"] == 7
+    assert call.kwargs["created_by"] == "user-xyz"

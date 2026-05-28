@@ -51,6 +51,10 @@ class TestDescribePreviewRoute:
         assert "Sample description" in body["description"]
         assert body["from_cache"] is False
         mock.assert_awaited_once()
+        # Confirm the service got org + provider scoping data.
+        kwargs = mock.await_args.kwargs
+        assert kwargs["organization_id"] == user.selected_organization_id
+        assert kwargs["created_by_provider_id"] == str(user.provider_id)
 
     async def test_rejects_unsupported_extension(
         self, test_client_factory, org_user

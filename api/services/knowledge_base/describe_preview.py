@@ -85,6 +85,8 @@ async def generate_description_preview(
     doc_type: Optional[str],
     intended_use: Optional[Iterable[str]],
     user_id: Optional[int],
+    organization_id: Optional[int],
+    created_by_provider_id: Optional[str],
 ) -> DescribePreviewResult:
     file_hash = _sha256_of_file(file_path)
 
@@ -101,6 +103,8 @@ async def generate_description_preview(
                 filename=filename,
                 content_type=mime_type or "application/octet-stream",
                 retrieval_mode=PREVIEW_RETRIEVAL_MODE,
+                organization_id=organization_id,
+                created_by=created_by_provider_id,
             )
         except Exception as exc:
             logger.warning(f"describe-preview MPS parse failed: {exc}")
