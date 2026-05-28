@@ -1,6 +1,8 @@
 """Tests for the KB parse cache (Redis-backed)."""
 
+import hashlib
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -9,6 +11,7 @@ from api.services.knowledge_base.parse_cache import (
     get_cached_parse,
     set_cached_parse,
 )
+from api.tasks import knowledge_base_processing
 
 
 class _FakeRedis:
@@ -97,12 +100,6 @@ async def test_delete_swallows_redis_errors(monkeypatch):
     )
     # Should not raise.
     await delete_cached_parse("abc123")
-
-
-import hashlib
-from unittest.mock import AsyncMock, MagicMock
-
-from api.tasks import knowledge_base_processing
 
 
 async def test_worker_reuses_cached_parse_and_deletes_key(
