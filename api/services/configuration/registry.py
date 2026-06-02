@@ -421,7 +421,15 @@ class AWSBedrockLLMConfiguration(BaseLLMConfiguration):
     )
 
 
-SPEACHES_LLM_MODELS = ["llama3", "mistral", "phi3", "qwen2", "gemma2", "deepseek-r1"]
+SPEACHES_LLM_MODELS = [
+    "Qwen/Qwen3-14B-AWQ",
+    "llama3",
+    "mistral",
+    "phi3",
+    "qwen2",
+    "gemma2",
+    "deepseek-r1",
+]
 
 
 @register_llm
@@ -429,7 +437,7 @@ class SpeachesLLMConfiguration(BaseLLMConfiguration):
     model_config = SPEACHES_PROVIDER_MODEL_CONFIG
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
-        default="llama3",
+        default="Qwen/Qwen3-14B-AWQ",
         description="Model name as exposed by your OpenAI-compatible server.",
         json_schema_extra={
             "examples": SPEACHES_LLM_MODELS,
@@ -437,7 +445,7 @@ class SpeachesLLMConfiguration(BaseLLMConfiguration):
         },
     )
     base_url: str = Field(
-        default="http://localhost:11434/v1",
+        default="http://vllm:8000/v1",
         description="OpenAI-compatible endpoint (Ollama, vLLM, etc.).",
     )
     api_key: str | list[str] | None = Field(
@@ -919,7 +927,7 @@ class RimeTTSConfiguration(BaseTTSConfiguration):
     )
 
 
-SPEACHES_TTS_MODELS = ["hexgrad/Kokoro-82M"]
+SPEACHES_TTS_MODELS = ["kokoro", "tts-1", "tts-1-hd"]
 
 
 @register_tts
@@ -940,7 +948,7 @@ class SpeachesTTSConfiguration(BaseTTSConfiguration):
         description="Voice ID for the TTS engine.",
     )
     base_url: str = Field(
-        default="http://localhost:8000/v1",
+        default="http://kokoro:8880/v1",
         description="OpenAI-compatible TTS endpoint (Kokoro-FastAPI, etc.).",
     )
     speed: float = Field(
@@ -1155,6 +1163,7 @@ class SpeechmaticsSTTConfiguration(BaseSTTConfiguration):
 
 
 SPEACHES_STT_MODELS = [
+    "Systran/faster-distil-whisper-large-v3",
     "Systran/faster-distil-whisper-small.en",
     "Systran/faster-whisper-large-v3",
 ]
@@ -1166,7 +1175,7 @@ class SpeachesSTTConfiguration(BaseSTTConfiguration):
     model_config = SPEACHES_PROVIDER_MODEL_CONFIG
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
-        default="Systran/faster-distil-whisper-small.en",
+        default="Systran/faster-distil-whisper-large-v3",
         description="Whisper model identifier as served by your STT endpoint.",
         json_schema_extra={
             "examples": SPEACHES_STT_MODELS,
@@ -1182,7 +1191,7 @@ class SpeachesSTTConfiguration(BaseSTTConfiguration):
         },
     )
     base_url: str = Field(
-        default="http://localhost:8000/v1",
+        default="http://speaches:8000/v1",
         description="OpenAI-compatible STT endpoint (Speaches, etc.).",
     )
     api_key: str | list[str] | None = Field(
