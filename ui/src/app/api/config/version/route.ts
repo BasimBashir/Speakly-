@@ -6,7 +6,11 @@ import { getServerBackendUrl } from "@/lib/apiClient";
 // Import version from package.json at build time
 import packageJson from "../../../../../package.json";
 
-const HEALTHCHECK_TIMEOUT_MS = 3000;
+// Local dev has no cloudflared service, so /api/v1/health does a tunnel lookup
+// that blocks ~3-4s (up to the 5s aiohttp timeout) before falling back to
+// localhost. Give the probe headroom over that worst case so the banner does
+// not false-positive on a healthy local backend.
+const HEALTHCHECK_TIMEOUT_MS = 8000;
 
 function trimTrailingSlash(url: string) {
   return url.endsWith("/") ? url.slice(0, -1) : url;
