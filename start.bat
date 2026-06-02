@@ -56,11 +56,42 @@ if errorlevel 1 (
     )
 )
 
-REM ---- Step 1/4 — bring up the devcontainer + all model services ------------
+REM ---- Step 1/5 — pre-pull every service image (resilient to registry blips) -
+REM
+REM  devcontainer up runs `docker compose up -d`, which pulls ALL images before
+REM  starting ANY container. A single transient ghcr.io TLS/token timeout there
+REM  aborts the whole launch (seen with the ~6.8 GB kokoro image at 99%). We
+REM  pull everything here first, with retries, so `up` finds images locally and
+REM  never has to hit the registry mid-launch. The compose file is the source of
+REM  truth for the image list, so this never drifts as services change.
 
 echo.
-echo [STEP 1/4] Bringing up devcontainer + GPU model services...
-echo            First run downloads ~13 GB of weights and takes 15-30 min.
+echo [STEP 1/5] Pulling all service images ^(~13 GB on first run^)...
+echo            Retries automatically on transient registry timeouts.
+echo.
+set /a pull_attempts=0
+:pull_images
+set /a pull_attempts+=1
+docker compose -f docker-compose-local.yaml pull
+if errorlevel 1 (
+    if !pull_attempts! geq 5 (
+        echo [ERROR] Image pull failed after 5 attempts.
+        echo         Check your network / registry access and rerun.
+        pause
+        exit /b 1
+    )
+    echo [WARN] Pull attempt !pull_attempts! failed ^(likely a transient registry timeout^).
+    echo        Retrying in 10s... cached layers resume, so this is quick.
+    timeout /t 10 /nobreak >nul
+    goto pull_images
+)
+echo [OK] All service images present locally.
+echo.
+
+REM ---- Step 2/5 — bring up the devcontainer + all model services ------------
+
+echo [STEP 2/5] Bringing up devcontainer + GPU model services...
+echo            First run also builds the workspace image and can take 15-30 min.
 echo            Subsequent runs start in under a minute.
 echo.
 call devcontainer up --workspace-folder .
@@ -72,23 +103,23 @@ if errorlevel 1 (
 echo [OK] Devcontainer + services running.
 echo.
 
-REM ---- Step 2/4 — backend (in its own window) -------------------------------
+REM ---- Step 3/5 — backend (in its own window) -------------------------------
 
-echo [STEP 2/4] Starting backend in a new window...
+echo [STEP 3/5] Starting backend in a new window...
 start "Dograh Backend" cmd /k "devcontainer exec --workspace-folder . bash scripts/start_services_dev.sh"
 echo [OK] Backend launched.
 echo.
 
-REM ---- Step 3/4 — UI (in its own window) ------------------------------------
+REM ---- Step 4/5 — UI (in its own window) ------------------------------------
 
-echo [STEP 3/4] Starting UI in a new window...
+echo [STEP 4/5] Starting UI in a new window...
 start "Dograh UI" cmd /k "devcontainer exec --workspace-folder . bash scripts/start_ui_dev.sh"
 echo [OK] UI launched.
 echo.
 
-REM ---- Step 4/4 — wait for backend health, then open browser ----------------
+REM ---- Step 5/5 — wait for backend health, then open browser ----------------
 
-echo [STEP 4/4] Waiting for backend health check at http://localhost:8000/api/v1/health
+echo [STEP 5/5] Waiting for backend health check at http://localhost:8000/api/v1/health
 echo            ^(timeout: 5 minutes^)
 
 set /a attempts=0
