@@ -89,6 +89,7 @@ step "Fixing ownership of named volume mountpoints"
 sudo chown -R "$(id -u):$(id -g)" \
   "$VENV_PATH" \
   "$ROOT_DIR/ui/node_modules" \
+  "$ROOT_DIR/ui/.next" \
   "$ROOT_DIR/api/mcp_server/ts_validator/node_modules"
 step_done
 
