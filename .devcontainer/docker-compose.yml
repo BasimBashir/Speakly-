@@ -31,9 +31,11 @@ services:
       - .:/workspaces/dograh:cached
       - dograh-venv:/workspaces/dograh/venv
       - dograh-ui-node_modules:/workspaces/dograh/ui/node_modules
+      - dograh-ui-next:/workspaces/dograh/ui/.next
       - dograh-ts-validator-node_modules:/workspaces/dograh/api/mcp_server/ts_validator/node_modules
 
 volumes:
   dograh-venv:
   dograh-ui-node_modules:
+  dograh-ui-next:
   dograh-ts-validator-node_modules:
