@@ -22,7 +22,7 @@ from api.services.knowledge_base.parse_cache import (
     get_cached_parse,
     set_cached_parse,
 )
-from api.services.mps_service_key_client import mps_service_key_client
+from api.services.knowledge_base import local_document_parser
 from api.services.pipecat.service_factory import create_llm_service_from_provider
 from pipecat.processors.aggregators.llm_context import LLMContext
 
@@ -98,7 +98,7 @@ async def generate_description_preview(
     else:
         logger.info(f"describe-preview cache MISS for {file_hash[:12]}...")
         try:
-            payload = await mps_service_key_client.process_document(
+            payload = await local_document_parser.process_document(
                 file_path=file_path,
                 filename=filename,
                 content_type=mime_type or "application/octet-stream",
@@ -107,16 +107,16 @@ async def generate_description_preview(
                 created_by=created_by_provider_id,
             )
         except Exception as exc:
-            logger.warning(f"describe-preview MPS parse failed: {exc}")
+            logger.warning(f"describe-preview local parse failed: {exc}")
             raise DescribePreviewError("parse_failed", str(exc)) from exc
         await set_cached_parse(file_hash, payload)
         from_cache = False
 
     document_text = _document_text_from_payload(payload)
     if not document_text.strip():
-        raise DescribePreviewError("parse_failed", "MPS returned no text")
+        raise DescribePreviewError("parse_failed", "No text could be extracted")
 
-    provider, model, api_key, kwargs = await resolve_kb_llm(user_id)
+    provider, model, api_key, kwargs = await resolve_kb_llm(user_id, organization_id)
     intended_list = list(intended_use) if intended_use else None
 
     try:

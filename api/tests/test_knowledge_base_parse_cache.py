@@ -152,7 +152,7 @@ async def test_worker_reuses_cached_parse_and_deletes_key(
     )
     mps_mock = AsyncMock()
     monkeypatch.setattr(
-        knowledge_base_processing.mps_service_key_client,
+        knowledge_base_processing.local_document_parser,
         "process_document",
         mps_mock,
     )

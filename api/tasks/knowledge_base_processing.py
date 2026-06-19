@@ -14,7 +14,7 @@ from api.db import db_client
 from api.db.models import KnowledgeBaseChunkModel
 from api.services.configuration.registry import ServiceProviders
 from api.services.gen_ai import AzureOpenAIEmbeddingService, OpenAIEmbeddingService
-from api.services.mps_service_key_client import mps_service_key_client
+from api.services.knowledge_base import local_document_parser
 from api.services.knowledge_base.parse_cache import (
     delete_cached_parse,
     get_cached_parse,
@@ -162,9 +162,9 @@ async def process_knowledge_base_document(
             await delete_cached_parse(file_hash)
         else:
             logger.info(
-                f"Delegating document processing to MPS (mode={retrieval_mode})"
+                f"Parsing document locally (mode={retrieval_mode})"
             )
-            mps_response = await mps_service_key_client.process_document(
+            mps_response = await local_document_parser.process_document(
                 file_path=temp_file_path,
                 filename=filename,
                 content_type=mime_type or "application/octet-stream",

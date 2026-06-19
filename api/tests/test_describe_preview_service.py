@@ -29,11 +29,11 @@ def patch_collaborators(monkeypatch, tmp_path):
         "docling_metadata": {},
     })
     monkeypatch.setattr(
-        describe_preview.mps_service_key_client, "process_document", mps_mock
+        describe_preview.local_document_parser, "process_document", mps_mock
     )
 
-    async def fake_resolve(_user_id):
-        return "speaches", "llama3", None, {"base_url": "http://localhost:8000/v1"}
+    async def fake_resolve(_user_id, _organization_id=None):
+        return "speaches", "qwen", None, {"base_url": "http://vllm:8000/v1"}
 
     monkeypatch.setattr(describe_preview, "resolve_kb_llm", fake_resolve)
 
