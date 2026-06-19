@@ -1345,7 +1345,7 @@ SPEACHES_STT_MODELS = [
     "Systran/faster-distil-whisper-small.en",
     "Systran/faster-whisper-large-v3",
 ]
-SPEACHES_STT_LANGUAGES = ["en", "ar", "nl", "fr", "de", "hi", "it", "pt", "es"]
+SPEACHES_STT_LANGUAGES = ["en", "ur", "hi", "ar", "nl", "fr", "de", "it", "pt", "es"]
 
 
 @register_stt
