@@ -88,10 +88,13 @@ Double-click `start.bat` in the repo root. It will:
 
 First run pulls ~13 GB of images and model weights (15–30 min depending on connection). Subsequent runs start in under a minute — model weights are cached in Docker named volumes.
 
+> **Note**
+> We collect anonymous usage data to improve the product. You can opt out by setting `ENABLE_TELEMETRY=false` before running the startup script.
+
 ### Option B — Quick Docker (no local development)
 
 ```bash
-curl -o docker-compose.yaml https://raw.githubusercontent.com/dograh-hq/dograh/main/docker-compose.yaml && REGISTRY=ghcr.io/dograh-hq ENABLE_TELEMETRY=true docker compose up --pull always
+curl -o docker-compose.yaml https://raw.githubusercontent.com/dograh-hq/dograh/main/docker-compose.yaml && curl -o start_docker.sh https://raw.githubusercontent.com/dograh-hq/dograh/main/scripts/start_docker.sh && chmod +x start_docker.sh && ./start_docker.sh
 ```
 
 > **Note**
