@@ -72,6 +72,7 @@ class ServiceProviders(str, Enum):
     GLADIA = "gladia"
     RIME = "rime"
     MINIMAX = "minimax"
+    PIPER = "piper"
     GOOGLE_VERTEX = "google_vertex"
     OPENAI_REALTIME = "openai_realtime"
     GROK_REALTIME = "grok_realtime"
@@ -254,6 +255,14 @@ SPEACHES_PROVIDER_MODEL_CONFIG = provider_model_config(
         "for setup and supported backends."
     ),
     provider_docs_url="https://github.com/speaches-ai/speaches",
+)
+PIPER_PROVIDER_MODEL_CONFIG = provider_model_config(
+    "Local Models (Piper)",
+    description=(
+        "Self-hosted Piper neural TTS (CPU). Ships an Urdu voice (ur_PK-fasih); "
+        "add more Piper voices in the piper-tts container."
+    ),
+    provider_docs_url="https://github.com/OHF-Voice/piper1-gpl",
 )
 AZURE_SPEECH_PROVIDER_MODEL_CONFIG = provider_model_config(
     "Azure Speech Services",
@@ -1047,6 +1056,31 @@ class SpeachesTTSConfiguration(BaseTTSConfiguration):
     )
 
 
+PIPER_TTS_VOICES = ["ur_PK-fasih-medium"]
+
+
+@register_tts
+class PiperTTSConfiguration(BaseTTSConfiguration):
+    model_config = PIPER_PROVIDER_MODEL_CONFIG
+    provider: Literal[ServiceProviders.PIPER] = ServiceProviders.PIPER
+    model: str = Field(
+        default="ur_PK-fasih-medium",
+        description="Piper voice id served by the piper-tts container (e.g. ur_PK-fasih-medium).",
+        json_schema_extra={
+            "examples": PIPER_TTS_VOICES,
+            "allow_custom_input": True,
+        },
+    )
+    base_url: str = Field(
+        default="http://piper-tts:5000",
+        description="Piper HTTP server base URL (POST / -> WAV).",
+    )
+    api_key: str | list[str] | None = Field(
+        default=None,
+        description="Not required for the self-hosted Piper server. Leave blank.",
+    )
+
+
 MINIMAX_TTS_MODELS = ["speech-2.8-hd", "speech-2.8-turbo"]
 MINIMAX_TTS_VOICES = [
     "English_Graceful_Lady",
@@ -1140,6 +1174,7 @@ TTSConfig = Annotated[
         CambTTSConfiguration,
         RimeTTSConfiguration,
         SpeachesTTSConfiguration,
+        PiperTTSConfiguration,
         MiniMaxTTSConfiguration,
         AzureSpeechTTSConfiguration,
     ],

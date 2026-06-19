@@ -8,6 +8,7 @@ from loguru import logger
 from api.constants import MPS_API_URL
 from api.services.configuration.registry import ServiceProviders
 from api.services.pipecat.minimax_tts import MiniMaxOwnedSessionTTSService
+from api.services.pipecat.piper_tts import PiperOwnedSessionTTSService
 from api.utils.url_security import validate_user_configured_service_url
 from pipecat.services.assemblyai.stt import AssemblyAISTTService, AssemblyAISTTSettings
 from pipecat.services.aws.llm import AWSBedrockLLMService, AWSBedrockLLMSettings
@@ -556,6 +557,19 @@ def create_tts_service(
             api_key=user_config.tts.api_key,
             region=region,
             settings=AzureTTSSettings(**settings_kwargs),
+            text_filters=[xml_function_tag_filter],
+            skip_aggregator_types=["recording_router", "recording"],
+            silence_time_s=1.0,
+        )
+    elif user_config.tts.provider == ServiceProviders.PIPER.value:
+        # Self-hosted Piper HTTP server (CPU). base_url is the server root;
+        # the voice id (model) is what the piper-tts container serves.
+        _validate_runtime_service_url(user_config.tts.base_url, "base_url")
+        session = aiohttp.ClientSession()
+        return PiperOwnedSessionTTSService(
+            base_url=user_config.tts.base_url,
+            aiohttp_session=session,
+            voice=user_config.tts.model,
             text_filters=[xml_function_tag_filter],
             skip_aggregator_types=["recording_router", "recording"],
             silence_time_s=1.0,
