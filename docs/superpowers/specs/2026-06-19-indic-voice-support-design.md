@@ -1,7 +1,7 @@
 # Self-Hosted Indic Voice Support (Urdu / Hindi / Roman) — Design
 
 **Date:** 2026-06-19
-**Status:** Draft for review
+**Status:** Approved (both open decisions resolved 2026-06-19)
 **Fork:** Speakly (BasimBashir/Speakly-)
 **Depends on:** `speakly-v1.35.0` (must be pushed/promoted before building)
 
@@ -69,21 +69,29 @@ Urdu ≈ Hindi spoken (Hustani); the difference is *script*. The pipeline runs i
 a workflow opts into Roman display/IO.
 
 ```
-Inbound:  mic → IndicConformer STT → native text
-                 → [if roman_mode] IndicXlit.to_roman → transcript/UI + LLM context
-Brain:    Qwen3-14B (handles native OR roman) → reply text
-Outbound: reply → [if reply is roman] IndicXlit.to_native → Piper TTS → audio
-                 → transcript/UI shows the roman form
+Inbound:  mic → IndicConformer STT → native text → LLM context
+Brain:    Qwen3-14B (works in NATIVE script) → reply text (native)
+Outbound: reply (native) → Piper TTS → audio        [AUDIO PATH: no transliteration]
+Display:  transcript frames → [if output_script=roman] IndicXlit.to_roman → UI
+                                                       [OFF the audio path, async]
 ```
 
-- **Recommended default:** LLM operates in native script (Qwen handles it
-  cleanly), Piper speaks native, and IndicXlit romanizes **only for the
-  transcript/chat display** when `roman_mode` is on. This keeps one transliteration
-  seam (display) and avoids round-trip drift. Chat mode can accept Roman input and
-  `to_native` it before the LLM if desired.
-- A per-workflow **script toggle** (`native` | `roman`) controls whether
-  transcripts/chat are romanized. Placement (STT config field vs workflow setting)
-  to confirm in review.
+**Decisions (resolved — chosen for real-time + non-disruptiveness):**
+
+- **LLM + TTS run in native script end-to-end.** IndicXlit is used **only to
+  romanize transcript/chat text for display**, never on the audio-critical path.
+  Rationale: a Roman-internal design would require IndicXlit (Roman→native) before
+  TTS every turn — added latency + mispronunciation drift (Roman has no standard
+  spelling). Native-internal = **zero transliteration latency on the audio path**.
+- **The script choice is a new field `output_script: "native" | "roman"` on the
+  Indic STT provider config** (default `native`), NOT a per-workflow setting.
+  Reason: it lives entirely inside the new provider's Pydantic model — auto-surfaced
+  via `/configurations/defaults`, **no workflow-schema changes, no DB migration,
+  and zero impact on existing providers, workflows, or the English path.** The
+  pipeline reads it from the workflow's resolved STT config to decide whether to
+  romanize both inbound (user) and outbound (bot) transcript text for display.
+- Chat mode (typed): when `output_script=roman`, accept Roman input and
+  `to_native` it before the LLM; the LLM still reasons in native.
 
 ## Surfacing as options (no default changes)
 - New providers are registered **alongside** existing ones in
