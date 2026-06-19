@@ -56,26 +56,43 @@ async def _warmup_embeddings(organization_id: int, created_by_user_id: int | Non
     """
     try:
         from api.db import db_client
+        from api.services.configuration.ai_model_configuration import (
+            apply_managed_embeddings_base_url,
+            get_resolved_ai_model_configuration,
+        )
         from api.services.gen_ai import OpenAIEmbeddingService
 
-        if created_by_user_id is None:
+        if created_by_user_id is None and organization_id is None:
             return
 
-        user_config = await db_client.get_user_configurations(created_by_user_id)
-        if not user_config.embeddings:
+        # Resolve through the v2-aware path (org v2 config -> legacy v1) so the
+        # warmup uses the same embeddings config as the real KB retrieval call.
+        resolved = await get_resolved_ai_model_configuration(
+            user_id=created_by_user_id,
+            organization_id=organization_id,
+        )
+        embeddings = resolved.effective.embeddings
+        if not embeddings:
             return
 
-        api_key = user_config.embeddings.api_key
+        api_key = getattr(embeddings, "api_key", None)
         if isinstance(api_key, list):
             import random
 
-            api_key = random.choice(api_key)
+            api_key = random.choice(api_key) if api_key else None
+
+        provider = getattr(embeddings, "provider", None)
+        provider = getattr(provider, "value", provider)
+        base_url = apply_managed_embeddings_base_url(
+            provider=provider,
+            base_url=getattr(embeddings, "base_url", None),
+        )
 
         service = OpenAIEmbeddingService(
             db_client=db_client,
             api_key=api_key,
-            model_id=user_config.embeddings.model,
-            base_url=getattr(user_config.embeddings, "base_url", None),
+            model_id=embeddings.model,
+            base_url=base_url,
         )
         await service.embed_texts(["warmup"])
         logger.debug("Embeddings warmup completed")

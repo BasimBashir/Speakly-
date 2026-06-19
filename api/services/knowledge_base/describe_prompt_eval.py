@@ -30,6 +30,7 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 FIXTURE_DIR = Path("api/tests/fixtures/describe_eval")
 REPORT_PATH = Path("docs/superpowers/specs/2026-05-28-describe-eval-results.md")
 EVAL_USER_ID = os.environ.get("KB_DESCRIBE_EVAL_USER_ID")  # set to a real user id in api/.env
+EVAL_ORG_ID = os.environ.get("KB_DESCRIBE_EVAL_ORG_ID")  # set if the user migrated to v2 org config
 RUNS_PER_COMBO = 3
 
 # Each fixture file → (display_name, doc_type, intended_use)
@@ -79,7 +80,8 @@ async def _eval_s2(
 
 async def main() -> None:
     user_id = int(EVAL_USER_ID) if EVAL_USER_ID else None
-    provider, model, api_key, kwargs = await resolve_kb_llm(user_id)
+    organization_id = int(EVAL_ORG_ID) if EVAL_ORG_ID else None
+    provider, model, api_key, kwargs = await resolve_kb_llm(user_id, organization_id)
     logger.info(f"Eval LLM: provider={provider}, model={model}")
     llm = create_llm_service_from_provider(provider, model, api_key, **kwargs)
 

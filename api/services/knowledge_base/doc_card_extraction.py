@@ -76,7 +76,9 @@ async def extract_doc_card_for_document(document_id: int) -> Optional[DocCard]:
         )
         return None
 
-    provider, model, api_key, kwargs = await resolve_kb_llm(document.created_by)
+    provider, model, api_key, kwargs = await resolve_kb_llm(
+        document.created_by, document.organization_id
+    )
     if provider != "dograh" and not api_key:
         await db_client.update_document_status(
             document_id,

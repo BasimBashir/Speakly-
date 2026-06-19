@@ -139,7 +139,7 @@ async def test_non_dograh_provider_without_api_key_is_skipped(db_session):
     org_id, user_id = await _make_org_and_user(db_session)
     doc = await _make_extractable_doc(db_session, org_id, user_id)
 
-    async def fake_resolve(_user_id):
+    async def fake_resolve(_user_id, _organization_id=None):
         return ("openai", "gpt-4.1", None, {})
 
     with patch(
