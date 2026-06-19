@@ -565,6 +565,8 @@ export type ByokPipelineAiModelConfiguration = {
     } & OpenAiEmbeddingsConfiguration) | ({
         provider: 'openrouter';
     } & OpenRouterEmbeddingsConfiguration) | ({
+        provider: 'speaches';
+    } & SpeachesEmbeddingsConfiguration) | ({
         provider: 'azure';
     } & AzureOpenAiEmbeddingsConfiguration) | ({
         provider: 'dograh';
@@ -625,6 +627,8 @@ export type ByokRealtimeAiModelConfiguration = {
     } & OpenAiEmbeddingsConfiguration) | ({
         provider: 'openrouter';
     } & OpenRouterEmbeddingsConfiguration) | ({
+        provider: 'speaches';
+    } & SpeachesEmbeddingsConfiguration) | ({
         provider: 'azure';
     } & AzureOpenAiEmbeddingsConfiguration) | ({
         provider: 'dograh';
@@ -2257,6 +2261,9 @@ export type EditDocumentRequestSchema = {
      * User Description
      */
     user_description?: string | null;
+};
+
+/**
  * ElevenLabs
  */
 export type ElevenlabsTtsConfiguration = {
@@ -4868,6 +4875,34 @@ export type SignupRequest = {
      * Name
      */
     name?: string | null;
+};
+
+/**
+ * Local Models (Speaches)
+ *
+ * Self-hosted OpenAI-compatible local models. See the Speaches project for setup and supported backends.
+ */
+export type SpeachesEmbeddingsConfiguration = {
+    /**
+     * Provider
+     */
+    provider?: 'speaches';
+    /**
+     * Api Key
+     */
+    api_key: string | Array<string>;
+    /**
+     * Model
+     *
+     * Embedding model name as exposed by your local server (must produce 1024-dim vectors).
+     */
+    model?: string;
+    /**
+     * Base Url
+     *
+     * OpenAI-compatible embeddings endpoint (TEI, Ollama, vLLM, etc.).
+     */
+    base_url?: string;
 };
 
 /**

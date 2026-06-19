@@ -6,8 +6,8 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import TimezoneSelect, { type ITimezoneOption } from 'react-timezone-select';
 import { toast } from 'sonner';
 
-import { downloadUsageRunsReportApiV1OrganizationsUsageRunsReportGet, getDailyUsageBreakdownApiV1OrganizationsUsageDailyBreakdownGet, getPreferencesApiV1OrganizationsPreferencesGet, getUsageHistoryApiV1OrganizationsUsageRunsGet, savePreferencesApiV1OrganizationsPreferencesPut } from '@/client/sdk.gen';
-import type { DailyUsageBreakdownResponse, OrganizationPreferences, UsageHistoryResponse, WorkflowRunUsageResponse } from '@/client/types.gen';
+import { downloadUsageRunsReportApiV1OrganizationsUsageRunsReportGet, getDailyUsageBreakdownApiV1OrganizationsUsageDailyBreakdownGet, getMpsCreditsApiV1OrganizationsUsageMpsCreditsGet, getPreferencesApiV1OrganizationsPreferencesGet, getUsageHistoryApiV1OrganizationsUsageRunsGet, savePreferencesApiV1OrganizationsPreferencesPut } from '@/client/sdk.gen';
+import type { DailyUsageBreakdownResponse, MpsCreditsResponse, OrganizationPreferences, UsageHistoryResponse, WorkflowRunUsageResponse } from '@/client/types.gen';
 import { CallTypeCell } from '@/components/CallTypeCell';
 import { DailyUsageTable } from '@/components/DailyUsageTable';
 import { FilterBuilder } from '@/components/filters/FilterBuilder';
@@ -15,6 +15,7 @@ import { MediaPreviewButton, MediaPreviewDialog } from '@/components/MediaPrevie
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
 import {
     Table,
     TableBody,
@@ -51,6 +52,10 @@ export default function UsagePage() {
     // Daily usage breakdown state (only for paid orgs)
     const [dailyUsage, setDailyUsage] = useState<DailyUsageBreakdownResponse | null>(null);
     const [isLoadingDaily, setIsLoadingDaily] = useState(false);
+
+    // Speakly MPS model credits state
+    const [mpsCredits, setMpsCredits] = useState<MpsCreditsResponse | null>(null);
+    const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
     // Initialize filters from URL. `activeFilters` tracks the in-progress
     // edits in the FilterBuilder; `appliedFilters` is what's actually been
@@ -150,6 +155,22 @@ export default function UsagePage() {
         }
     }, [auth.isAuthenticated, organizationPricing]);
 
+    const fetchMpsCredits = useCallback(async () => {
+        if (!auth.isAuthenticated) return;
+
+        setIsLoadingCredits(true);
+        try {
+            const response = await getMpsCreditsApiV1OrganizationsUsageMpsCreditsGet();
+            if (response.data) {
+                setMpsCredits(response.data);
+            }
+        } catch (error) {
+            console.error('Failed to fetch MPS credits:', error);
+        } finally {
+            setIsLoadingCredits(false);
+        }
+    }, [auth.isAuthenticated]);
+
     const fetchPreferences = useCallback(async () => {
         if (!auth.isAuthenticated) return;
 
@@ -241,6 +262,13 @@ export default function UsagePage() {
             fetchDailyUsage();
         }
     }, [auth.isAuthenticated, organizationPricing, fetchDailyUsage]);
+
+    // Fetch Speakly MPS model credits
+    useEffect(() => {
+        if (auth.isAuthenticated) {
+            fetchMpsCredits();
+        }
+    }, [auth.isAuthenticated, fetchMpsCredits]);
 
     // Update URL with query parameters
     const updateUrlParams = useCallback((params: { page?: number; filters?: ActiveFilter[] }) => {
