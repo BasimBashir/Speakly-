@@ -79,6 +79,7 @@ class PipecatEngine:
         embeddings_api_version: Optional[str] = None,
         has_recordings: bool = False,
         context_compaction_enabled: bool = False,
+        conversation_language: Optional[str] = None,
     ):
         self.task = task
         self.llm = llm
@@ -91,6 +92,7 @@ class PipecatEngine:
         self.context = context
         self.workflow = workflow
         self._call_context_vars = call_context_vars
+        self._conversation_language = conversation_language
         self._workflow_run_id = workflow_run_id
         self._node_transition_callback = node_transition_callback
         self._initialized = False
@@ -542,6 +544,7 @@ class PipecatEngine:
             has_recordings=self._has_recordings,
             organization_id=await self._get_organization_id(),
             call_direction=self._call_context_vars.get("call_type"),
+            conversation_language=self._conversation_language,
         )
         functions = await compose_functions_for_node(
             node=node,

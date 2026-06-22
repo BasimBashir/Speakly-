@@ -72,6 +72,14 @@ async def get_default_configurations() -> DefaultConfigurationsResponse:
     return configurations
 
 
+@router.get("/configurations/conversation-languages")
+async def get_conversation_languages():
+    """List the per-agent conversation languages (English/Urdu/Hindi/...)."""
+    from api.services.configuration.conversation_language import supported_languages
+
+    return {"languages": supported_languages()}
+
+
 @router.get("/auth/user")
 async def get_auth_user(
     user: UserModel = Depends(get_user),

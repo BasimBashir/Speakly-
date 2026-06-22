@@ -596,6 +596,7 @@ async def _run_pipeline(
         embeddings_api_version=embeddings_api_version,
         has_recordings=has_recordings,
         context_compaction_enabled=context_compaction_enabled,
+        conversation_language=run_configs.get("conversation_language"),
     )
 
     # Create pipeline components

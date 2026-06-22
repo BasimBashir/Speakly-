@@ -111,6 +111,7 @@ async def compose_system_prompt_for_node(
     has_recordings: bool,
     organization_id: _Optional[int] = None,
     call_direction: _Optional[str] = None,
+    conversation_language: _Optional[str] = None,
 ) -> str:
     """Compose the full system prompt text for a workflow node.
 
@@ -135,6 +136,14 @@ async def compose_system_prompt_for_node(
     formatted_node_prompt = format_prompt(node.prompt)
 
     parts = [p for p in (global_prompt, formatted_node_prompt) if p]
+
+    # Per-agent conversation language: instruct the model to reply in the chosen
+    # language (no-op for English). This is what makes an Urdu agent reply in Urdu.
+    from api.services.configuration.conversation_language import get_profile
+
+    reply_instruction = get_profile(conversation_language).reply_instruction
+    if reply_instruction:
+        parts.append(reply_instruction)
 
     if has_recordings and "RECORDING_ID:" in formatted_node_prompt:
         parts.append(RECORDING_RESPONSE_MODE_INSTRUCTIONS)

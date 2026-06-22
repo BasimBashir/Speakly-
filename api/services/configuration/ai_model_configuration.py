@@ -32,6 +32,9 @@ from api.services.configuration.masking import (
     resolve_masked_api_keys,
 )
 from api.services.configuration.registry import ServiceProviders
+from api.services.configuration.conversation_language import (
+    CONVERSATION_LANGUAGE_KEY,
+)
 from api.services.configuration.resolve import resolve_effective_config
 
 AIModelConfigurationSource = Literal["organization_v2", "legacy_user_v1", "empty"]
@@ -91,18 +94,48 @@ async def get_effective_ai_model_configuration_for_workflow(
         WORKFLOW_MODEL_CONFIGURATION_V2_OVERRIDE_KEY
     )
     if v2_override:
-        return compile_ai_model_configuration_v2(
+        effective = compile_ai_model_configuration_v2(
             OrganizationAIModelConfigurationV2.model_validate(v2_override)
         )
+    else:
+        resolved_config = await get_resolved_ai_model_configuration(
+            user_id=user_id,
+            organization_id=organization_id,
+        )
+        effective = resolve_effective_config(
+            resolved_config.effective,
+            workflow_configurations.get("model_overrides"),
+        )
 
-    resolved_config = await get_resolved_ai_model_configuration(
-        user_id=user_id,
-        organization_id=organization_id,
+    return _apply_conversation_language(
+        effective, workflow_configurations.get(CONVERSATION_LANGUAGE_KEY)
     )
-    return resolve_effective_config(
-        resolved_config.effective,
-        workflow_configurations.get("model_overrides"),
-    )
+
+
+def _apply_conversation_language(
+    effective: EffectiveAIModelConfiguration,
+    code: str | None,
+) -> EffectiveAIModelConfiguration:
+    """Overlay a per-agent conversation-language profile's STT/TTS onto the
+    resolved effective config. English / unknown codes are a no-op."""
+    from api.services.configuration.conversation_language import get_profile
+    from api.services.configuration.registry import ServiceType
+    from api.services.configuration.resolve import _build_section_from_override
+
+    profile = get_profile(code)
+    if profile.stt_override is None and profile.tts_override is None:
+        return effective
+
+    result = effective.model_copy(deep=True)
+    if profile.stt_override:
+        stt = _build_section_from_override(ServiceType.STT, profile.stt_override)
+        if stt is not None:
+            result.stt = stt
+    if profile.tts_override:
+        tts = _build_section_from_override(ServiceType.TTS, profile.tts_override)
+        if tts is not None:
+            result.tts = tts
+    return result
 
 
 async def get_organization_ai_model_configuration_v2(
