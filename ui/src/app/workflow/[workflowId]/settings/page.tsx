@@ -286,6 +286,9 @@ function GeneralSection({
     const [contextCompactionEnabled, setContextCompactionEnabled] = useState(
         workflowConfigurations.context_compaction_enabled ?? false,
     );
+    const [conversationLanguage, setConversationLanguage] = useState<string>(
+        workflowConfigurations.conversation_language || "english",
+    );
     const [isSaving, setIsSaving] = useState(false);
     const [isUploadingAudio, setIsUploadingAudio] = useState(false);
     const [audioUploadError, setAudioUploadError] = useState<string | null>(null);
@@ -301,9 +304,10 @@ function GeneralSection({
             maxUserIdleTimeout !== (workflowConfigurations.max_user_idle_timeout || 10) ||
             smartTurnStopSecs !== (workflowConfigurations.smart_turn_stop_secs || 2) ||
             turnStopStrategy !== (workflowConfigurations.turn_stop_strategy || "transcription") ||
-            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false)
+            contextCompactionEnabled !== (workflowConfigurations.context_compaction_enabled ?? false) ||
+            conversationLanguage !== (workflowConfigurations.conversation_language || "english")
         );
-    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, workflowConfigurations]);
+    }, [name, workflowName, ambientNoiseConfig, maxCallDuration, maxUserIdleTimeout, smartTurnStopSecs, turnStopStrategy, contextCompactionEnabled, conversationLanguage, workflowConfigurations]);
 
     useUnsavedChanges("general", isDirty);
 
@@ -377,6 +381,7 @@ function GeneralSection({
                     smart_turn_stop_secs: smartTurnStopSecs,
                     turn_stop_strategy: turnStopStrategy,
                     context_compaction_enabled: contextCompactionEnabled,
+                    conversation_language: conversationLanguage,
                 },
                 name,
             );
@@ -589,6 +594,38 @@ function GeneralSection({
                             </p>
                         </div>
                     )}
+                </div>
+
+                <Separator />
+
+                {/* Conversation Language */}
+                <div className="space-y-3">
+                    <div>
+                        <h3 className="text-sm font-medium">Conversation Language</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Language this agent converses in — sets the reply language, transcription, and voice.
+                        </p>
+                    </div>
+                    <div className="space-y-2">
+                        <Select
+                            value={conversationLanguage}
+                            onValueChange={(value: string) => setConversationLanguage(value)}
+                        >
+                            <SelectTrigger id="conversation_language">
+                                <SelectValue placeholder="Select language" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="english">English</SelectItem>
+                                <SelectItem value="urdu">Urdu</SelectItem>
+                                <SelectItem value="hindi">Hindi</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                            {conversationLanguage === "english"
+                                ? "Uses the org Model Configuration as-is."
+                                : "Overrides this agent to reply in, transcribe, and speak the selected language (self-hosted Indic models)."}
+                        </p>
+                    </div>
                 </div>
 
                 <Separator />
