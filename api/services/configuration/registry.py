@@ -74,6 +74,7 @@ class ServiceProviders(str, Enum):
     RIME = "rime"
     MINIMAX = "minimax"
     PIPER = "piper"
+    XTTS_URDU = "xtts_urdu"
     GOOGLE_VERTEX = "google_vertex"
     OPENAI_REALTIME = "openai_realtime"
     GROK_REALTIME = "grok_realtime"
@@ -264,6 +265,15 @@ PIPER_PROVIDER_MODEL_CONFIG = provider_model_config(
         "add more Piper voices in the piper-tts container."
     ),
     provider_docs_url="https://github.com/OHF-Voice/piper1-gpl",
+)
+XTTS_URDU_PROVIDER_MODEL_CONFIG = provider_model_config(
+    "Local Models (XTTS Urdu)",
+    description=(
+        "Self-hosted XTTS-v2 fine-tuned for Urdu — a cleaner, voice-cloned male "
+        "Urdu voice (GPU). Served by the xtts-urdu container. Higher latency than "
+        "Piper; Piper remains the low-latency fallback."
+    ),
+    provider_docs_url="https://huggingface.co/suhaibrashid17/XTTS-v2-Urdu-FT",
 )
 INDIC_CONFORMER_PROVIDER_MODEL_CONFIG = provider_model_config(
     "Local Models (IndicConformer)",
@@ -1091,6 +1101,25 @@ class PiperTTSConfiguration(BaseTTSConfiguration):
     )
 
 
+@register_tts
+class XTTSUrduTTSConfiguration(BaseTTSConfiguration):
+    model_config = XTTS_URDU_PROVIDER_MODEL_CONFIG
+    provider: Literal[ServiceProviders.XTTS_URDU] = ServiceProviders.XTTS_URDU
+    model: str = Field(
+        default="xtts-v2-urdu-ft",
+        description="Fixed XTTS-Urdu model served by the xtts-urdu container.",
+        json_schema_extra={"examples": ["xtts-v2-urdu-ft"]},
+    )
+    base_url: str = Field(
+        default="http://xtts-urdu:8000",
+        description="XTTS-Urdu HTTP server base URL (POST /tts -> WAV).",
+    )
+    api_key: str | list[str] | None = Field(
+        default=None,
+        description="Not required for the self-hosted XTTS-Urdu server. Leave blank.",
+    )
+
+
 MINIMAX_TTS_MODELS = ["speech-2.8-hd", "speech-2.8-turbo"]
 MINIMAX_TTS_VOICES = [
     "English_Graceful_Lady",
@@ -1185,6 +1214,7 @@ TTSConfig = Annotated[
         RimeTTSConfiguration,
         SpeachesTTSConfiguration,
         PiperTTSConfiguration,
+        XTTSUrduTTSConfiguration,
         MiniMaxTTSConfiguration,
         AzureSpeechTTSConfiguration,
     ],

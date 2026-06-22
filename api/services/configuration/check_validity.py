@@ -135,11 +135,12 @@ class UserConfigurationValidator:
                 return [{"model": service_name, "message": str(e)}]
             return []
 
-        # Piper and IndicConformer are self-hosted and require no API key
-        # (base_url already validated above). Treat as valid regardless of key.
+        # Piper, IndicConformer and XTTS-Urdu are self-hosted and require no API
+        # key (base_url already validated above). Treat as valid regardless of key.
         if provider in (
             ServiceProviders.PIPER.value,
             ServiceProviders.INDIC_CONFORMER.value,
+            ServiceProviders.XTTS_URDU.value,
         ):
             return []
 

@@ -16,7 +16,8 @@
     "speaches",
     "speaches-model-init",
     "piper-tts",
-    "indic-stt"
+    "indic-stt",
+    "xtts-urdu"
   ],
   "workspaceFolder": "/workspaces/dograh",
   "shutdownAction": "stopCompose",

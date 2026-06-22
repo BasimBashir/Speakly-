@@ -51,7 +51,18 @@ PROFILES: dict[str, ConversationLanguageProfile] = {
     "urdu": ConversationLanguageProfile(
         code="urdu",
         label="Urdu",
-        reply_instruction="Respond only in Urdu, using Urdu (Nastaliq) script.",
+        # The Urdu voice is a MALE voice clone, so instruct masculine grammar.
+        # Keep the Urdu simple/gentle and mixed with common English words (how
+        # people actually speak in Pakistan) — heavy literary Arabic/Farsi
+        # vocabulary also mispronounces on the TTS. Native script for the LLM.
+        reply_instruction=(
+            "Respond only in simple, gentle, everyday Urdu (Nastaliq script), "
+            "speaking as a MALE — always use masculine Urdu grammar (e.g. "
+            "'karta hoon', 'sakta hoon', not 'karti hoon'/'sakti hoon'). "
+            "Use easy conversational words mixed with common English words the "
+            "way people speak in Pakistan; avoid heavy or literary Arabic/Farsi "
+            "vocabulary."
+        ),
         stt_override={
             "provider": "indic_conformer",
             "model": "ai4bharat/indic-conformer-600m-multilingual",
@@ -59,10 +70,12 @@ PROFILES: dict[str, ConversationLanguageProfile] = {
             "base_url": "http://indic-stt:8000/v1",
             "output_script": "native",
         },
+        # Cleaner voice-cloned male Urdu via XTTS-Urdu. Piper remains selectable
+        # as a low-latency fallback Voice provider.
         tts_override={
-            "provider": "piper",
-            "model": "ur_PK-fasih-medium",
-            "base_url": "http://piper-tts:5000",
+            "provider": "xtts_urdu",
+            "model": "xtts-v2-urdu-ft",
+            "base_url": "http://xtts-urdu:8000",
         },
     ),
     "hindi": ConversationLanguageProfile(

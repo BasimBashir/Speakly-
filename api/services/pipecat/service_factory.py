@@ -9,6 +9,7 @@ from api.constants import MPS_API_URL
 from api.services.configuration.registry import ServiceProviders
 from api.services.pipecat.minimax_tts import MiniMaxOwnedSessionTTSService
 from api.services.pipecat.piper_tts import PiperOwnedSessionTTSService
+from api.services.pipecat.xtts_tts import XTTSUrduTTSService
 from api.utils.url_security import validate_user_configured_service_url
 from pipecat.services.assemblyai.stt import AssemblyAISTTService, AssemblyAISTTSettings
 from pipecat.services.aws.llm import AWSBedrockLLMService, AWSBedrockLLMSettings
@@ -584,6 +585,18 @@ def create_tts_service(
             base_url=user_config.tts.base_url,
             aiohttp_session=session,
             voice=user_config.tts.model,
+            text_filters=[xml_function_tag_filter],
+            skip_aggregator_types=["recording_router", "recording"],
+            silence_time_s=1.0,
+        )
+    elif user_config.tts.provider == ServiceProviders.XTTS_URDU.value:
+        # Self-hosted XTTS-Urdu HTTP server (GPU). Cleaner voice-cloned Urdu;
+        # base_url is the server root (POST /tts -> WAV).
+        _validate_runtime_service_url(user_config.tts.base_url, "base_url")
+        session = aiohttp.ClientSession()
+        return XTTSUrduTTSService(
+            base_url=user_config.tts.base_url,
+            aiohttp_session=session,
             text_filters=[xml_function_tag_filter],
             skip_aggregator_types=["recording_router", "recording"],
             silence_time_s=1.0,
