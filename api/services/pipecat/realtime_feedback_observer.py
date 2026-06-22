@@ -4,9 +4,11 @@ This observer watches pipeline frames and sends relevant events (transcriptions,
 bot text, function calls, TTFB metrics) over WebSocket to provide real-time
 feedback in the UI.
 
-For TTS text, we wait until the frame has passed through BaseOutputTransport.
-That transport already applies presentation timestamp timing against audio
-playback, so the UI text is emitted from the same clock as the spoken audio.
+Bot TTS text is emitted as soon as it is produced (the first downstream
+TTSTextFrame), so the transcript tracks or slightly leads the spoken audio.
+Previously it was gated on the BaseOutputTransport audio-playback clock, which —
+combined with WebSocket + render latency — made the on-screen text lag behind
+the voice (heard over the low-latency WebRTC media channel).
 
 Streaming vs. persisted data:
 - WebSocket receives all events in real-time (interim transcriptions, TTS text
@@ -58,7 +60,6 @@ from pipecat.frames.frames import (
 from pipecat.metrics.metrics import TTFBMetricsData
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.utils.enums import RealtimeFeedbackType
 
 
@@ -136,14 +137,15 @@ class RealtimeFeedbackObserver(BaseObserver):
             if not isinstance(frame, ErrorFrame) and not is_upstream_transcription:
                 return
 
-        # TTSTextFrame may be observed before the output transport has applied
-        # its audio clock. Match RTVIObserver: leave the frame unmarked so the
-        # transport-pushed copy can be handled with playback timing already done.
-        if isinstance(frame, TTSTextFrame) and not isinstance(
-            source, BaseOutputTransport
-        ):
-            return
-
+        # Bot transcript timing: emit the bot's text as soon as the TTS produces
+        # it (the FIRST downstream occurrence), rather than waiting for the copy
+        # re-pushed by BaseOutputTransport on the audio-playback clock. The
+        # audio-clock copy lands *behind* the spoken audio because the text then
+        # crosses the WebSocket + React render, while audio plays over the
+        # low-latency WebRTC media channel — the user heard the voice before the
+        # text appeared. Emitting on production makes the transcript track (or
+        # slightly lead) the voice. `_frames_seen` dedups the later transport
+        # copy. Display-only; does not affect audio or LLM context.
         self._frames_seen.add(frame.id)
 
         logger.trace(f"{self} Received Frame: {frame} Direction: {frame_direction}")
