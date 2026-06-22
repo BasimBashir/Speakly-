@@ -241,7 +241,7 @@ services:
         for i in $$(seq 1 60); do
           if curl -sf http://speaches:8000/health > /dev/null 2>&1; then
             echo "Speaches up. Pre-downloading Whisper model..."
-            curl -sS -X POST "http://speaches:8000/v1/models/Systran%2Ffaster-distil-whisper-large-v3"
+            curl -sS -X POST "http://speaches:8000/v1/models/Systran%2Ffaster-distil-whisper-small.en"
             echo ""
             echo "Whisper model ready."
             exit 0
