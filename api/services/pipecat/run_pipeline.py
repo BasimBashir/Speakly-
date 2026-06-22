@@ -824,10 +824,21 @@ async def _run_pipeline(
     # System Prompt and Tools
     await engine.initialize()
 
-    # Add real-time feedback observer (always logs to buffer, streams to WS if available)
+    # Add real-time feedback observer (always logs to buffer, streams to WS if available).
+    # When the STT is configured with output_script="roman", romanize the live
+    # transcript for display only (native script -> "kya haal hai"); never affects
+    # the LLM context or TTS audio.
+    _stt_cfg = getattr(user_config, "stt", None)
+    _romanize_lang = (
+        getattr(_stt_cfg, "language", None)
+        if _stt_cfg is not None
+        and getattr(_stt_cfg, "output_script", "native") == "roman"
+        else None
+    )
     feedback_observer = RealtimeFeedbackObserver(
         ws_sender=ws_sender,
         logs_buffer=in_memory_logs_buffer,
+        romanize_lang=_romanize_lang,
     )
     task.add_observer(feedback_observer)
 

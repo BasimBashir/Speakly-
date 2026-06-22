@@ -83,17 +83,31 @@ class RealtimeFeedbackObserver(BaseObserver):
         self,
         ws_sender: Callable[[dict], Awaitable[None]],
         logs_buffer: Optional["InMemoryLogsBuffer"] = None,
+        romanize_lang: Optional[str] = None,
     ):
         """
         Args:
             ws_sender: Async function to send messages over WebSocket.
                        Expected signature: async def send(message: dict) -> None
             logs_buffer: Optional InMemoryLogsBuffer to persist events for post-call analysis.
+            romanize_lang: When set (e.g. "ur"/"hi"), the displayed transcript text
+                is romanized to Latin for the live UI (native script -> "kya haal hai").
+                Display-only; never affects the LLM context or TTS audio. When None,
+                text is shown as-is.
         """
         super().__init__()
         self._ws_sender = ws_sender
         self._logs_buffer = logs_buffer
         self._frames_seen: Set[str] = set()
+        self._romanize_lang = romanize_lang
+
+    def _disp(self, text: str) -> str:
+        """Romanize text for display when romanize_lang is set; else return as-is."""
+        if not self._romanize_lang or not text:
+            return text
+        from api.services.transliteration.romanize import to_roman
+
+        return to_roman(text, self._romanize_lang)
 
     async def cleanup(self):
         """Clean up resources. Must be called when the observer is no longer needed."""
@@ -158,7 +172,7 @@ class RealtimeFeedbackObserver(BaseObserver):
         elif isinstance(frame, InterimTranscriptionFrame):
             await self._send_ws(
                 build_user_transcription_event(
-                    text=frame.text,
+                    text=self._disp(frame.text),
                     final=False,
                     user_id=frame.user_id,
                     timestamp=frame.timestamp,
@@ -169,7 +183,7 @@ class RealtimeFeedbackObserver(BaseObserver):
         elif isinstance(frame, TranscriptionFrame):
             await self._send_ws(
                 build_user_transcription_event(
-                    text=frame.text,
+                    text=self._disp(frame.text),
                     final=True,
                     user_id=frame.user_id,
                     timestamp=frame.timestamp,
@@ -181,13 +195,15 @@ class RealtimeFeedbackObserver(BaseObserver):
         # to avoid word-level log entries from word-timestamp providers.
         elif isinstance(frame, TTSSpeakFrame):
             if getattr(frame, "persist_to_logs", False):
-                await self._append_to_buffer(build_bot_text_event(text=frame.text))
+                await self._append_to_buffer(
+                    build_bot_text_event(text=self._disp(frame.text))
+                )
         # Handle bot TTS text after output transport timing, WebSocket only
         # Complete turn text is persisted via register_turn_handlers,
         # except for frames explicitly flagged persist_to_logs (e.g. recording
         # transcripts from play_audio) which bypass the aggregator path.
         elif isinstance(frame, TTSTextFrame):
-            message = build_bot_text_event(text=frame.text)
+            message = build_bot_text_event(text=self._disp(frame.text))
 
             if getattr(frame, "persist_to_logs", False):
                 await self._send_message(message)
