@@ -68,6 +68,7 @@ class ServiceProviders(str, Enum):
     CAMB = "camb"
     AWS_BEDROCK = "aws_bedrock"
     SPEACHES = "speaches"
+    INDIC_CONFORMER = "indic_conformer"
     ASSEMBLYAI = "assemblyai"
     GLADIA = "gladia"
     RIME = "rime"
@@ -263,6 +264,15 @@ PIPER_PROVIDER_MODEL_CONFIG = provider_model_config(
         "add more Piper voices in the piper-tts container."
     ),
     provider_docs_url="https://github.com/OHF-Voice/piper1-gpl",
+)
+INDIC_CONFORMER_PROVIDER_MODEL_CONFIG = provider_model_config(
+    "Local Models (IndicConformer)",
+    description=(
+        "Self-hosted AI4Bharat IndicConformer ASR for Urdu, Hindi and 20 other "
+        "Indian languages (code-mix aware). Served OpenAI-compatibly by the "
+        "indic-stt container."
+    ),
+    provider_docs_url="https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual",
 )
 AZURE_SPEECH_PROVIDER_MODEL_CONFIG = provider_model_config(
     "Azure Speech Services",
@@ -1372,9 +1382,61 @@ class SpeachesSTTConfiguration(BaseSTTConfiguration):
         default="http://speaches:8000/v1",
         description="OpenAI-compatible STT endpoint (Speaches, etc.).",
     )
+    output_script: str = Field(
+        default="native",
+        description=(
+            "Transcript display script: 'native' (e.g. Urdu/Devanagari) or "
+            "'roman' (romanized for display, e.g. 'kya haal hai')."
+        ),
+        json_schema_extra={"examples": ["native", "roman"]},
+    )
     api_key: str | list[str] | None = Field(
         default=None,
         description="Usually not required for self-hosted STT. Leave blank unless enforced.",
+    )
+
+
+INDIC_CONFORMER_STT_MODELS = ["ai4bharat/indic-conformer-600m-multilingual"]
+INDIC_CONFORMER_STT_LANGUAGES = ["ur", "hi", "bn", "gu", "kn", "ml", "mr", "pa", "ta", "te"]
+
+
+@register_stt
+class IndicConformerSTTConfiguration(BaseSTTConfiguration):
+    model_config = INDIC_CONFORMER_PROVIDER_MODEL_CONFIG
+    provider: Literal[ServiceProviders.INDIC_CONFORMER] = (
+        ServiceProviders.INDIC_CONFORMER
+    )
+    model: str = Field(
+        default="ai4bharat/indic-conformer-600m-multilingual",
+        description="IndicConformer model served by the indic-stt container.",
+        json_schema_extra={
+            "examples": INDIC_CONFORMER_STT_MODELS,
+            "allow_custom_input": True,
+        },
+    )
+    language: str = Field(
+        default="ur",
+        description="ISO 639-1 language code (ur=Urdu, hi=Hindi, ...).",
+        json_schema_extra={
+            "examples": INDIC_CONFORMER_STT_LANGUAGES,
+            "allow_custom_input": True,
+        },
+    )
+    base_url: str = Field(
+        default="http://indic-stt:8000/v1",
+        description="OpenAI-compatible STT endpoint served by the indic-stt container.",
+    )
+    output_script: str = Field(
+        default="native",
+        description=(
+            "Transcript display script: 'native' (e.g. Urdu/Devanagari) or "
+            "'roman' (romanized for display, e.g. 'kya haal hai')."
+        ),
+        json_schema_extra={"examples": ["native", "roman"]},
+    )
+    api_key: str | list[str] | None = Field(
+        default=None,
+        description="Not required for the self-hosted indic-stt server. Leave blank.",
     )
 
 
@@ -1450,6 +1512,7 @@ STTConfig = Annotated[
         SpeechmaticsSTTConfiguration,
         SarvamSTTConfiguration,
         SpeachesSTTConfiguration,
+        IndicConformerSTTConfiguration,
         AssemblyAISTTConfiguration,
         GladiaSTTConfiguration,
         AzureSpeechSTTConfiguration,

@@ -219,6 +219,20 @@ def create_stt_service(
             ),
             sample_rate=audio_config.transport_in_sample_rate,
         )
+    elif user_config.stt.provider == ServiceProviders.INDIC_CONFORMER.value:
+        # Self-hosted IndicConformer served OpenAI-compatibly by the indic-stt
+        # container; reuse the same client as Speaches.
+        language = getattr(user_config.stt, "language", None)
+        _validate_runtime_service_url(user_config.stt.base_url, "base_url")
+        return SpeachesSTTService(
+            base_url=user_config.stt.base_url,
+            api_key=user_config.stt.api_key or "none",
+            settings=SpeachesSTTSettings(
+                model=user_config.stt.model,
+                language=language,
+            ),
+            sample_rate=audio_config.transport_in_sample_rate,
+        )
     elif user_config.stt.provider == ServiceProviders.ASSEMBLYAI.value:
         language = getattr(user_config.stt, "language", None)
         settings_kwargs = {"model": user_config.stt.model, "language": language}

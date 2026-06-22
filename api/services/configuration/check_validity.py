@@ -135,9 +135,12 @@ class UserConfigurationValidator:
                 return [{"model": service_name, "message": str(e)}]
             return []
 
-        # Piper is self-hosted and requires no API key (base_url already
-        # validated above). Treat as valid regardless of the api_key field.
-        if provider == ServiceProviders.PIPER.value:
+        # Piper and IndicConformer are self-hosted and require no API key
+        # (base_url already validated above). Treat as valid regardless of key.
+        if provider in (
+            ServiceProviders.PIPER.value,
+            ServiceProviders.INDIC_CONFORMER.value,
+        ):
             return []
 
         # Vertex Realtime uses service-account credentials (or ADC) instead of api_key
