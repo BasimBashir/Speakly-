@@ -14,7 +14,9 @@
     "embeddings",
     "kokoro",
     "speaches",
-    "speaches-model-init"
+    "speaches-model-init",
+    "piper-tts",
+    "indic-stt"
   ],
   "workspaceFolder": "/workspaces/dograh",
   "shutdownAction": "stopCompose",
