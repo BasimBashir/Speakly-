@@ -1381,12 +1381,14 @@ class SpeechmaticsSTTConfiguration(BaseSTTConfiguration):
 
 
 SPEACHES_STT_MODELS = [
-    # Fastest first: distil-small.en is the lowest-latency English STT.
-    # distil-large-v3 is more accurate (English); faster-whisper-large-v3 is the
-    # full multilingual model (Urdu/Hindi agents use IndicConformer instead via
-    # the conversation-language profile, so this Speaches default is English).
-    "Systran/faster-distil-whisper-small.en",
+    # Default is distil-large-v3: accurate English STT, still distilled/faster
+    # than the full multilingual large-v3. distil-small.en is the lowest-latency
+    # option but noticeably less accurate (it garbled real speech in testing and
+    # caused tool misfires) — only pick it if latency truly outweighs accuracy.
+    # Urdu/Hindi agents use IndicConformer via the conversation-language profile,
+    # so this Speaches default only serves English agents.
     "Systran/faster-distil-whisper-large-v3",
+    "Systran/faster-distil-whisper-small.en",
     "Systran/faster-whisper-large-v3",
 ]
 SPEACHES_STT_LANGUAGES = ["en", "ur", "hi", "ar", "nl", "fr", "de", "it", "pt", "es"]
@@ -1397,7 +1399,7 @@ class SpeachesSTTConfiguration(BaseSTTConfiguration):
     model_config = SPEACHES_PROVIDER_MODEL_CONFIG
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
-        default="Systran/faster-distil-whisper-small.en",
+        default="Systran/faster-distil-whisper-large-v3",
         description="Whisper model identifier as served by your STT endpoint.",
         json_schema_extra={
             "examples": SPEACHES_STT_MODELS,
