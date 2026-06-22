@@ -47,6 +47,9 @@ export const ConfigurationsDialog = ({
     const [contextCompactionEnabled, setContextCompactionEnabled] = useState<boolean>(
         workflowConfigurations?.context_compaction_enabled ?? false
     );
+    const [conversationLanguage, setConversationLanguage] = useState<string>(
+        workflowConfigurations?.conversation_language || 'english'
+    );
     const [isSaving, setIsSaving] = useState(false);
 
     const handleSave = async () => {
@@ -59,6 +62,7 @@ export const ConfigurationsDialog = ({
                 smart_turn_stop_secs: smartTurnStopSecs,
                 turn_stop_strategy: turnStopStrategy,
                 context_compaction_enabled: contextCompactionEnabled,
+                conversation_language: conversationLanguage,
             }, name);
             onOpenChange(false);
         } catch (error) {
@@ -78,6 +82,7 @@ export const ConfigurationsDialog = ({
             setSmartTurnStopSecs(workflowConfigurations?.smart_turn_stop_secs || 2);
             setTurnStopStrategy(workflowConfigurations?.turn_stop_strategy || 'transcription');
             setContextCompactionEnabled(workflowConfigurations?.context_compaction_enabled ?? false);
+            setConversationLanguage(workflowConfigurations?.conversation_language || 'english');
         }
     }, [open, workflowName, workflowConfigurations]);
 
@@ -191,6 +196,30 @@ export const ConfigurationsDialog = ({
                                 {turnStopStrategy === 'transcription'
                                     ? "Best for short responses (1-2 word statements). Ends turn when transcription indicates completion."
                                     : "Best for longer responses with natural pauses. Uses ML model to detect end of turn."}
+                            </p>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="conversation_language" className="text-xs">
+                                Conversation Language
+                            </Label>
+                            <Select
+                                value={conversationLanguage}
+                                onValueChange={(value: string) => setConversationLanguage(value)}
+                            >
+                                <SelectTrigger id="conversation_language">
+                                    <SelectValue placeholder="Select language" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="english">English</SelectItem>
+                                    <SelectItem value="urdu">Urdu</SelectItem>
+                                    <SelectItem value="hindi">Hindi</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                                {conversationLanguage === 'english'
+                                    ? "Uses the org Model Configuration as-is."
+                                    : "Overrides this agent to reply in, transcribe, and speak the selected language (self-hosted Indic models)."}
                             </p>
                         </div>
 
