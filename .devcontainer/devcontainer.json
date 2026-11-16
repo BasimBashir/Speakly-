@@ -15,9 +15,7 @@
     "kokoro",
     "speaches",
     "speaches-model-init",
-    "piper-tts",
-    "indic-stt",
-    "xtts-urdu"
+    "piper-tts"
   ],
   "workspaceFolder": "/workspaces/dograh",
   "shutdownAction": "stopCompose",

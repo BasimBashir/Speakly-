@@ -80,7 +80,8 @@ services:
   # LLM — vLLM serving Qwen3 32B AWQ with native tool calling
   # ---------------------------------------------------------------------------
   vllm:
-    image: vllm/vllm-openai:latest
+    # Pinned: `latest` drifts (start.bat pulls every run) and a new vLLM can break on WSL2.
+    image: vllm/vllm-openai:v0.26.0
     command:
       - --model
       - Qwen/Qwen3-14B-AWQ
@@ -126,6 +127,9 @@ services:
       - hf_cache:/root/.cache/huggingface
     environment:
       - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+      # WSL2 (Docker Desktop) disables pinned memory, so vLLM's V2 model runner
+      # dies with "UVA is not available"; the V1 runner doesn't need it.
+      - VLLM_USE_V2_MODEL_RUNNER=0
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
