@@ -29,14 +29,14 @@ def test_urdu_profile_has_overrides_and_instruction():
     assert "Urdu" in p.reply_instruction
     assert p.stt_override["provider"] == "indic_conformer"
     assert p.stt_override["language"] == "ur"
-    assert p.tts_override["provider"] == "piper"
+    assert p.tts_override["provider"] == "xtts_urdu"
 
 
 def test_overlay_applies_urdu_and_is_noop_for_english():
     base = EffectiveAIModelConfiguration()  # empty org config
     urdu = _apply_conversation_language(base, "urdu")
     assert urdu.stt is not None and urdu.stt.provider.value == "indic_conformer"
-    assert urdu.tts is not None and urdu.tts.provider.value == "piper"
+    assert urdu.tts is not None and urdu.tts.provider.value == "xtts_urdu"
 
     # English / unknown leave the config untouched (same object semantics)
     assert _apply_conversation_language(base, "english") is base

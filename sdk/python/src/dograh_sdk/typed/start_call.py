@@ -17,7 +17,8 @@ from dograh_sdk.typed._base import TypedNode
 class StartCall_Extraction_variablesRow:
     """
     Each entry declares one variable to capture, with its name, data type,
-    and extraction hint.
+    and extraction hint. Call outcomes are configured separately in workflow
+    settings.
     """
 
     name: str
@@ -65,18 +66,34 @@ class StartCall(TypedNode):
     greeting: Optional[str] = None
     """
     Text spoken via TTS at the start of the call. Supports
-    {{template_variables}}. Leave empty to skip the greeting. Not supported
-    with realtime (speech-to-speech) models.
+    {{template_variables}}. Leave empty to skip the greeting.
     """
 
     greeting_recording_id: Optional[str] = None
     """
-    Pre-recorded audio file played at the start of the call.
+    Pre-recorded audio file played at the start of the call. Required when
+    Greeting Type is Pre-recorded Audio.
+    """
+
+    allow_greeting_interrupt: bool = True
+    """
+    Let the caller interrupt the opening greeting. When off, caller speech
+    is retained until the greeting finishes. Applies to cascade and realtime
+    openings. Realtime uses provider or local speech detection according to
+    the adapter when interruptions are allowed.
+    """
+
+    greeting_interrupt_min_words: int = 2
+    """
+    Cascade only: interrupt when the caller's transcription contains at
+    least this many words. Realtime providers do not support this word
+    threshold; they use provider or local speech detection according to the
+    adapter.
     """
 
     allow_interrupt: bool = False
     """
-    When true, the user can interrupt the agent mid-utterance.
+    Allow the caller to interrupt responses after the opening greeting.
     """
 
     add_global_prompt: bool = True
@@ -87,13 +104,15 @@ class StartCall(TypedNode):
 
     delayed_start: bool = False
     """
-    When true, the agent waits before speaking after pickup. Useful for
-    outbound calls where the called party needs a moment to settle.
+    Listen before the opening in cascade and realtime calls. If the caller
+    speaks first, respond to them instead. Enabled voicemail handling can
+    resolve a human answer sooner.
     """
 
-    delayed_start_duration: float = 2.0
+    delayed_start_duration: float = 1.2
     """
-    Seconds to wait before the agent speaks. 0.1–10.
+    Seconds to listen for a silent answer before opening. 0–10. With
+    voicemail handling, replaces its default 1.2-second window.
     """
 
     extraction_enabled: bool = False
@@ -109,7 +128,8 @@ class StartCall(TypedNode):
     extraction_variables: list[StartCall_Extraction_variablesRow] = field(default_factory=list)
     """
     Each entry declares one variable to capture, with its name, data type,
-    and extraction hint.
+    and extraction hint. Call outcomes are configured separately in workflow
+    settings.
     """
 
     tool_uuids: list[str] = field(default_factory=list)
@@ -122,11 +142,10 @@ class StartCall(TypedNode):
     Documents the agent can reference.
     """
 
-    pre_call_fetch_enabled: bool = False
+    pre_call_fetch_mode: Literal['disabled', 'always', 'inbound', 'outbound'] = 'disabled'
     """
-    When true, makes a POST request to an external API before the call
-    starts and merges the JSON response into the call context as template
-    variables.
+    Controls when a POST request is made to enrich the call context before
+    the Start node opens.
     """
 
     pre_call_fetch_url: Optional[str] = None

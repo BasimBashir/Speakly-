@@ -12,10 +12,9 @@ from loguru import logger
 
 from api.db import db_client
 from api.db.models import KnowledgeBaseChunkModel
-from api.services.configuration.registry import ServiceProviders
-from api.services.gen_ai import AzureOpenAIEmbeddingService, OpenAIEmbeddingService
+from api.services.gen_ai import build_embedding_service
 from api.services.knowledge_base import local_document_parser
-from api.services.knowledge_base.parse_cache import (
+from api.services.knowledge_base.parse_cache import (  # noqa: F401 (set_cached_parse used by tests)
     delete_cached_parse,
     get_cached_parse,
     set_cached_parse,
@@ -23,6 +22,23 @@ from api.services.knowledge_base.parse_cache import (
 from api.services.storage import storage_fs
 
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
+EMBEDDING_BATCH_SIZE = 64
+
+
+async def _embed_texts_in_batches(
+    embedding_service,
+    texts: list[str],
+    batch_size: int = EMBEDDING_BATCH_SIZE,
+) -> list[list[float]]:
+    """Generate embeddings in bounded batches for provider/MPS stability."""
+    embeddings: list[list[float]] = []
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start : start + batch_size]
+        logger.info(
+            f"Generating embedding batch {start // batch_size + 1} ({len(batch)} texts)"
+        )
+        embeddings.extend(await embedding_service.embed_texts(batch))
+    return embeddings
 
 
 async def _enqueue_doc_card_extraction(
@@ -47,9 +63,8 @@ async def _enqueue_doc_card_extraction(
             FunctionNames.REBUILD_ORG_KNOWLEDGE_INDEX, organization_id
         )
     except Exception as extraction_err:
-        logger.warning(
-            f"DocCard extraction failed for {document_id}: {extraction_err}",
-            exc_info=True,
+        logger.opt(exception=True).warning(
+            "DocCard extraction failed for {}: {}", document_id, extraction_err
         )
 
 
@@ -122,9 +137,8 @@ async def process_knowledge_base_document(
         existing_doc = await db_client.get_document_by_hash(file_hash, organization_id)
         if existing_doc and existing_doc.id != document_id:
             error_message = (
-                f"This file is a duplicate of '{existing_doc.filename}'. "
-                f"Please delete the duplicate files and consolidate them into a "
-                f"single unique file before uploading."
+                f"This content is identical to '{existing_doc.filename}'. "
+                f"Keep only one copy of it in the knowledge base."
             )
             logger.warning(
                 f"Duplicate document detected: {document_id} is duplicate of "
@@ -154,59 +168,19 @@ async def process_knowledge_base_document(
             mime_type=mime_type,
         )
 
-        mps_response = await get_cached_parse(file_hash)
-        if mps_response is not None:
-            logger.info(
-                f"Reusing cached MPS parse for document {document_id} (hash={file_hash[:12]}...)"
-            )
-            await delete_cached_parse(file_hash)
-        else:
-            logger.info(
-                f"Parsing document locally (mode={retrieval_mode})"
-            )
-            mps_response = await local_document_parser.process_document(
-                file_path=temp_file_path,
-                filename=filename,
-                content_type=mime_type or "application/octet-stream",
-                retrieval_mode=retrieval_mode,
-                max_tokens=max_tokens,
-                organization_id=organization_id,
-                created_by=created_by_provider_id,
-            )
-
-        docling_metadata = mps_response.get("docling_metadata", {})
-
-        if retrieval_mode == "full_document":
-            full_text = mps_response.get("full_text") or ""
-            await db_client.update_document_full_text(document_id, full_text)
-            await db_client.update_document_status(
-                document_id,
-                "completed",
-                total_chunks=0,
-                docling_metadata=docling_metadata,
-            )
-            await _enqueue_doc_card_extraction(document_id, organization_id)
-            logger.info(
-                f"Successfully processed full_document {document_id}. "
-                f"Text length: {len(full_text)} chars"
-            )
-            return
-
-        # Chunked mode: fetch user embedding config, embed, and persist chunks.
         embeddings_provider = None
         embeddings_api_key = None
         embeddings_model = None
         embeddings_base_url = None
         embeddings_endpoint = None
         embeddings_api_version = None
-        if document.created_by:
+        if retrieval_mode == "chunked":
             from api.services.configuration.ai_model_configuration import (
                 apply_managed_embeddings_base_url,
                 get_resolved_ai_model_configuration,
             )
 
             resolved_config = await get_resolved_ai_model_configuration(
-                user_id=document.created_by,
                 organization_id=document.organization_id,
             )
             effective_config = resolved_config.effective
@@ -231,6 +205,44 @@ async def process_knowledge_base_document(
                     f"model={embeddings_model}"
                 )
 
+        # Fork: parse locally (no remote MPS), reusing a describe-preview parse
+        # cached under the same file hash when available.
+        mps_response = await get_cached_parse(file_hash)
+        if mps_response is not None:
+            logger.info(
+                f"Reusing cached parse for document {document_id} (hash={file_hash[:12]}...)"
+            )
+            await delete_cached_parse(file_hash)
+        else:
+            logger.info(f"Parsing document locally (mode={retrieval_mode})")
+            mps_response = await local_document_parser.process_document(
+                file_path=temp_file_path,
+                filename=filename,
+                content_type=mime_type or "application/octet-stream",
+                retrieval_mode=retrieval_mode,
+                max_tokens=max_tokens,
+                organization_id=document.organization_id,
+                created_by=created_by_provider_id,
+            )
+
+        docling_metadata = mps_response.get("docling_metadata", {})
+
+        if retrieval_mode == "full_document":
+            full_text = mps_response.get("full_text") or ""
+            await db_client.update_document_full_text(document_id, full_text)
+            await db_client.update_document_status(
+                document_id,
+                "completed",
+                total_chunks=0,
+                docling_metadata=docling_metadata,
+            )
+            await _enqueue_doc_card_extraction(document_id, organization_id)
+            logger.info(
+                f"Successfully processed full_document {document_id}. "
+                f"Text length: {len(full_text)} chars"
+            )
+            return
+
         if not embeddings_api_key:
             error_message = (
                 "API key not configured. Please set your API key in "
@@ -242,21 +254,18 @@ async def process_knowledge_base_document(
             )
             return
 
-        if embeddings_provider == ServiceProviders.AZURE.value and embeddings_endpoint:
-            embedding_service = AzureOpenAIEmbeddingService(
-                db_client=db_client,
-                api_key=embeddings_api_key,
-                endpoint=embeddings_endpoint,
-                model_id=embeddings_model or "text-embedding-3-small",
-                api_version=embeddings_api_version or "2024-02-15-preview",
-            )
-        else:
-            embedding_service = OpenAIEmbeddingService(
-                db_client=db_client,
-                api_key=embeddings_api_key,
-                model_id=embeddings_model or "text-embedding-3-small",
-                base_url=embeddings_base_url,
-            )
+        # Ingestion runs outside any workflow run, so resolve the MPS correlation
+        # id here.
+        embedding_service = await build_embedding_service(
+            db_client=db_client,
+            provider=embeddings_provider,
+            api_key=embeddings_api_key,
+            model=embeddings_model,
+            base_url=embeddings_base_url,
+            endpoint=embeddings_endpoint,
+            api_version=embeddings_api_version,
+            resolve_correlation=True,
+        )
 
         mps_chunks = mps_response.get("chunks", [])
         if not mps_chunks:
@@ -285,12 +294,21 @@ async def process_knowledge_base_document(
             f"Generating embeddings for {len(chunk_texts)} chunks "
             f"using {embedding_service.get_model_id()}"
         )
-        embeddings = await embedding_service.embed_texts(chunk_texts)
+        embeddings = await _embed_texts_in_batches(embedding_service, chunk_texts)
+        if len(embeddings) != len(chunk_records):
+            raise ValueError(
+                "Embedding count mismatch: "
+                f"expected {len(chunk_records)}, got {len(embeddings)}"
+            )
         for chunk_record, embedding in zip(chunk_records, embeddings):
             chunk_record.embedding = embedding
 
         logger.info("Storing chunks in database")
-        await db_client.create_chunks_batch(chunk_records)
+        await db_client.replace_chunks_for_document(
+            document_id=document_id,
+            organization_id=organization_id,
+            chunks=chunk_records,
+        )
 
         await db_client.update_document_status(
             document_id,
@@ -307,15 +325,8 @@ async def process_knowledge_base_document(
         )
 
     except Exception as e:
-        # Pass error message as positional arg (not interpolated into the
-        # format string) so loguru doesn't try to format literal `{key}`
-        # substrings that may appear in upstream exception payloads
-        # (e.g. OpenAI/TEI 422 errors that contain `{'message': ...}`).
-        logger.error(
-            "Error processing knowledge base document {}: {}",
-            document_id,
-            str(e),
-            exc_info=True,
+        logger.exception(
+            "Error processing knowledge base document {}: {}", document_id, e
         )
         await db_client.update_document_status(
             document_id, "failed", error_message=str(e)

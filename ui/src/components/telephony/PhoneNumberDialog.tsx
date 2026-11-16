@@ -8,7 +8,7 @@ import {
   getWorkflowsSummaryApiV1WorkflowSummaryGet,
   updatePhoneNumberApiV1OrganizationsTelephonyConfigsConfigIdPhoneNumbersPhoneNumberIdPut,
 } from "@/client/sdk.gen";
-import type { PhoneNumberResponse } from "@/client/types.gen";
+import type { PhoneNumberResponse, TrunkResponse } from "@/client/types.gen";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,11 +35,20 @@ interface PhoneNumberDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   configId: number;
+  /** False for a provider that only receives calls: a number on it is never a
+      caller ID, so the default-caller choice is not offered. */
+  supportsOutbound?: boolean;
+  /** Carrier paths on this configuration; empty for providers without trunks. */
+  trunks?: TrunkResponse[];
+  /** Preselected trunk when creating — set when the dialog is opened from a
+      trunk rather than from the flat numbers table. */
+  defaultTrunkId?: number | null;
   existing?: PhoneNumberResponse | null;
   onSaved: () => void;
 }
 
 const NO_WORKFLOW = "__none__";
+const NO_TRUNK = "__no_trunk__";
 
 // Mirrors api/schemas/telephony_phone_number.py::_validate_address_shape and
 // api/utils/telephony_address.py — keep in sync. Returns an error message
@@ -65,6 +74,9 @@ export function PhoneNumberDialog({
   open,
   onOpenChange,
   configId,
+  supportsOutbound = true,
+  trunks = [],
+  defaultTrunkId = null,
   existing,
   onSaved,
 }: PhoneNumberDialogProps) {
@@ -77,6 +89,7 @@ export function PhoneNumberDialog({
   const [isActive, setIsActive] = useState(true);
   const [isDefaultCallerId, setIsDefaultCallerId] = useState(false);
   const [inboundWorkflowId, setInboundWorkflowId] = useState<string>(NO_WORKFLOW);
+  const [trunkId, setTrunkId] = useState<string>(NO_TRUNK);
   const [workflows, setWorkflows] = useState<{ id: number; name: string }[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [addressTouched, setAddressTouched] = useState(false);
@@ -92,8 +105,12 @@ export function PhoneNumberDialog({
     setInboundWorkflowId(
       existing?.inbound_workflow_id ? String(existing.inbound_workflow_id) : NO_WORKFLOW,
     );
+    const initialTrunkId = existing
+      ? existing.telephony_trunk_id
+      : (defaultTrunkId ?? null);
+    setTrunkId(initialTrunkId ? String(initialTrunkId) : NO_TRUNK);
     setAddressTouched(false);
-  }, [open, existing]);
+  }, [open, existing, defaultTrunkId]);
 
   // Only validate the address on create — edits keep the immutable address.
   const addressError = isEdit ? null : validateAddress(address, countryCode);
@@ -131,6 +148,7 @@ export function PhoneNumberDialog({
       const token = await getAccessToken();
       const inboundId =
         inboundWorkflowId === NO_WORKFLOW ? null : Number(inboundWorkflowId);
+      const selectedTrunkId = trunkId === NO_TRUNK ? null : Number(trunkId);
 
       let providerSync: PhoneNumberResponse["provider_sync"] | undefined;
       if (isEdit && existing) {
@@ -144,6 +162,8 @@ export function PhoneNumberDialog({
               country_code: countryCode || undefined,
               inbound_workflow_id: inboundId ?? undefined,
               clear_inbound_workflow: inboundId === null,
+              telephony_trunk_id: selectedTrunkId ?? undefined,
+              clear_trunk: selectedTrunkId === null,
             },
           },
         );
@@ -160,8 +180,9 @@ export function PhoneNumberDialog({
               country_code: countryCode || undefined,
               label: label || undefined,
               is_active: isActive,
-              is_default_caller_id: isDefaultCallerId,
+              is_default_caller_id: supportsOutbound && isDefaultCallerId,
               inbound_workflow_id: inboundId ?? undefined,
+              telephony_trunk_id: selectedTrunkId ?? undefined,
             },
           },
         );
@@ -267,12 +288,37 @@ export function PhoneNumberDialog({
             </p>
           </div>
 
+          {trunks.length > 0 && (
+            <div className="space-y-1">
+              <Label htmlFor="pn-trunk">Outbound trunk</Label>
+              <Select value={trunkId} onValueChange={setTrunkId}>
+                <SelectTrigger id="pn-trunk">
+                  <SelectValue placeholder="(none)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_TRUNK}>(none)</SelectItem>
+                  {trunks.map((trunk) => (
+                    <SelectItem key={trunk.id} value={String(trunk.id)}>
+                      {trunk.name}
+                      {trunk.enabled ? "" : " (disabled)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {trunks.length > 1
+                  ? "Calls from this number leave on this trunk. Pick the one whose carrier authorised the number — carriers reject a caller ID they do not own."
+                  : "Calls from this number leave on this trunk. With a single trunk Dograh falls back to it anyway."}
+              </p>
+            </div>
+          )}
+
           <div className="flex items-center justify-between rounded border p-3">
             <Label className="text-sm">Active</Label>
             <Switch checked={isActive} onCheckedChange={setIsActive} />
           </div>
 
-          {!isEdit && (
+          {!isEdit && supportsOutbound && (
             <div className="flex items-center justify-between rounded border p-3">
               <div>
                 <Label className="text-sm">Default caller ID for this configuration</Label>

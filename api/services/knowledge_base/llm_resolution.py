@@ -30,7 +30,6 @@ async def resolve_kb_llm(
     )
 
     resolved = await get_resolved_ai_model_configuration(
-        user_id=user_id,
         organization_id=organization_id,
     )
     llm = resolved.effective.llm

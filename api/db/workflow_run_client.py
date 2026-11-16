@@ -1,7 +1,7 @@
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import Float, cast, func
 from sqlalchemy.future import select
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -14,9 +14,23 @@ from api.db.models import (
     WorkflowModel,
     WorkflowRunModel,
 )
-from api.enums import CallType, StorageBackend
+from api.enums import CallType, StorageBackend, WorkflowRunMode, WorkflowRunState
 from api.schemas.workflow import WorkflowRunResponseSchema
 from api.services.workflow.run_usage_response import format_public_cost_info
+from api.utils.recording_artifacts import get_recording_storage_key
+
+
+def append_unique_tags(existing_tags: object, new_tags: object) -> list:
+    """Union two call-tag lists, preserving order and dropping duplicates.
+
+    Every producer of ``call_tags`` appends and none removes, so a union is
+    always the intended result of two writers meeting.
+    """
+    tags = list(existing_tags) if isinstance(existing_tags, list) else []
+    for tag in new_tags if isinstance(new_tags, list) else []:
+        if tag not in tags:
+            tags.append(tag)
+    return tags
 
 
 class WorkflowRunClient(BaseDBClient):
@@ -32,78 +46,68 @@ class WorkflowRunClient(BaseDBClient):
         logs: dict = None,
         campaign_id: int = None,
         queued_run_id: int = None,
-        use_draft: bool = False,
         organization_id: int | None = None,
+        definition_id: int | None = None,
+        use_draft: bool = False,
+        campaign_traffic_split: dict | None = None,
+        model_configuration_overrides: dict | None = None,
     ) -> WorkflowRunModel:
+        """Create a run."""
         async with self.async_session() as session:
             workflow_query = (
                 select(WorkflowModel)
                 .options(joinedload(WorkflowModel.user))
-                .where(
-                    WorkflowModel.id == workflow_id, WorkflowModel.user_id == user_id
-                )
+                .where(WorkflowModel.id == workflow_id)
             )
             if organization_id is not None:
                 workflow_query = workflow_query.where(
                     WorkflowModel.organization_id == organization_id
                 )
+            elif user_id is not None:
+                workflow_query = workflow_query.where(WorkflowModel.user_id == user_id)
 
             workflow = await session.execute(workflow_query)
             workflow = workflow.scalars().first()
             if not workflow:
                 raise ValueError(f"Workflow with ID {workflow_id} not found")
 
-            # Resolve which definition to bind to this run
-            target_def = None
-
-            if use_draft:
-                # For test calls: prefer draft if it exists, fall back to published
-                draft_result = await session.execute(
-                    select(WorkflowDefinitionModel).where(
+            if definition_id is not None:
+                definition_result = await session.execute(
+                    select(WorkflowDefinitionModel.id).where(
+                        WorkflowDefinitionModel.id == definition_id,
                         WorkflowDefinitionModel.workflow_id == workflow.id,
-                        WorkflowDefinitionModel.status == "draft",
                     )
                 )
-                target_def = draft_result.scalars().first()
-
-            if target_def is None:
-                # Use the published version via released_definition_id (preferred)
-                # or fall back to is_current for backward compatibility
-                if workflow.released_definition_id:
-                    target_def = await session.get(
-                        WorkflowDefinitionModel, workflow.released_definition_id
+                if definition_result.scalar_one_or_none() is None:
+                    raise ValueError(
+                        f"Workflow definition {definition_id} does not belong to "
+                        f"workflow {workflow.id}"
                     )
-                else:
-                    pub_result = await session.execute(
-                        select(WorkflowDefinitionModel).where(
-                            WorkflowDefinitionModel.workflow_id == workflow.id,
-                            WorkflowDefinitionModel.is_current == True,
-                        )
-                    )
-                    target_def = pub_result.scalars().first()
 
             # Get the current storage backend based on ENABLE_AWS_S3 flag
             current_backend = StorageBackend.get_current_backend()
-
-            # Use initial_context from the version if available, else from workflow
-            default_context = (
-                target_def.template_context_variables
-                if target_def and target_def.template_context_variables
-                else workflow.template_context_variables
-            )
 
             new_run = WorkflowRunModel(
                 name=name,
                 workflow=workflow,
                 mode=mode,
-                definition_id=target_def.id if target_def else None,
-                initial_context=initial_context or default_context,
+                definition_id=definition_id,
+                initial_context=initial_context or {},
+                model_configuration_overrides=model_configuration_overrides,
                 gathered_context=gathered_context or {},
                 logs=logs or {},
                 campaign_id=campaign_id,
                 queued_run_id=queued_run_id,
                 storage_backend=current_backend.value,
                 call_type=call_type.value,
+                extra={
+                    "use_draft": use_draft,
+                    **(
+                        {"campaign_traffic_split": campaign_traffic_split}
+                        if campaign_traffic_split
+                        else {}
+                    ),
+                },
             )
             session.add(new_run)
             try:
@@ -113,6 +117,59 @@ class WorkflowRunClient(BaseDBClient):
                 raise e
             await session.refresh(new_run)
         return new_run
+
+    async def store_model_configuration_snapshot_if_absent(
+        self, run_id: int, organization_id: int, snapshot: dict
+    ) -> dict:
+        """Pin a run's resolved model configuration once; return what is pinned.
+
+        Two workers authorizing the same run resolve the same inputs, but the
+        resolve picks among pooled credentials, so the first write wins and the
+        other caller executes the stored choice rather than its own.
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(WorkflowRunModel)
+                .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+                .where(
+                    WorkflowRunModel.id == run_id,
+                    WorkflowModel.organization_id == organization_id,
+                )
+                .with_for_update(of=WorkflowRunModel)
+            )
+            run = result.scalar_one_or_none()
+            if run is None:
+                raise ValueError("Workflow run not found")
+            if run.model_configuration_snapshot:
+                return run.model_configuration_snapshot
+            run.model_configuration_snapshot = snapshot
+            await session.commit()
+            return snapshot
+
+    async def mark_workflow_run_running(
+        self, run_id: int, organization_id: int
+    ) -> bool:
+        """Move a run from initialized to running; return whether it moved.
+
+        Only an initialized run moves, so a terminal status that landed first
+        is never reopened.
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(WorkflowRunModel)
+                .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+                .where(
+                    WorkflowRunModel.id == run_id,
+                    WorkflowModel.organization_id == organization_id,
+                )
+                .with_for_update(of=WorkflowRunModel)
+            )
+            run = result.scalar_one_or_none()
+            if run is None or run.state != WorkflowRunState.INITIALIZED.value:
+                return False
+            run.state = WorkflowRunState.RUNNING.value
+            await session.commit()
+            return True
 
     async def get_all_workflow_runs(self) -> list[WorkflowRunModel]:
         async with self.async_session() as session:
@@ -188,13 +245,19 @@ class WorkflowRunClient(BaseDBClient):
                         "workflow_name": run.workflow.name if run.workflow else None,
                         "user_id": run.workflow.user_id if run.workflow else None,
                         "organization_id": organization.id if organization else None,
-                        "organization_name": organization.provider_id
-                        if organization
-                        else None,
+                        "organization_name": (
+                            organization.provider_id if organization else None
+                        ),
                         "mode": run.mode,
                         "is_completed": run.is_completed,
                         "recording_url": run.recording_url,
                         "transcript_url": run.transcript_url,
+                        "user_recording_url": get_recording_storage_key(
+                            run.extra, "user"
+                        ),
+                        "bot_recording_url": get_recording_storage_key(
+                            run.extra, "bot"
+                        ),
                         "usage_info": run.usage_info,
                         "cost_info": run.cost_info,
                         "initial_context": run.initial_context,
@@ -244,6 +307,26 @@ class WorkflowRunClient(BaseDBClient):
                 .where(WorkflowRunModel.id == run_id)
             )
             return result.scalars().first()
+
+    async def get_workflow_run_configurations(
+        self, run_id: int, organization_id: int
+    ) -> dict:
+        """Load the immutable workflow configuration snapshot for one run."""
+
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(WorkflowDefinitionModel.workflow_configurations)
+                .join(
+                    WorkflowRunModel,
+                    WorkflowRunModel.definition_id == WorkflowDefinitionModel.id,
+                )
+                .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+                .where(
+                    WorkflowRunModel.id == run_id,
+                    WorkflowModel.organization_id == organization_id,
+                )
+            )
+            return result.scalar_one_or_none() or {}
 
     async def get_organization_id_by_workflow_run_id(
         self, run_id: int | None
@@ -313,6 +396,12 @@ class WorkflowRunClient(BaseDBClient):
                         "is_completed": run.is_completed,
                         "recording_url": run.recording_url,
                         "transcript_url": run.transcript_url,
+                        "user_recording_url": get_recording_storage_key(
+                            run.extra, "user"
+                        ),
+                        "bot_recording_url": get_recording_storage_key(
+                            run.extra, "bot"
+                        ),
                         "cost_info": format_public_cost_info(
                             run.cost_info, run.usage_info
                         ),
@@ -340,7 +429,14 @@ class WorkflowRunClient(BaseDBClient):
         logs: dict | None = None,
         state: str | None = None,
         annotations: dict | None = None,
+        extra: dict | None = None,
+        model_configuration_snapshot: dict | None = None,
     ) -> WorkflowRunModel:
+        """Merge supplied fields under a row lock.
+
+        Pass only changed context keys, not a previously read context snapshot;
+        incoming values take precedence over the current stored values.
+        """
         async with self.async_session() as session:
             # Use SELECT FOR UPDATE to lock the row during the update
             result = await session.execute(
@@ -351,6 +447,10 @@ class WorkflowRunClient(BaseDBClient):
             run = result.scalars().first()
             if not run:
                 raise ValueError(f"Workflow run with ID {run_id} not found")
+            if model_configuration_snapshot:
+                # Replaced wholesale: the pre-call fetch re-resolves the run's
+                # whole setup, so a merge would mix two credential selections.
+                run.model_configuration_snapshot = model_configuration_snapshot
             if recording_url:
                 run.recording_url = recording_url
             if transcript_url:
@@ -362,18 +462,48 @@ class WorkflowRunClient(BaseDBClient):
             if cost_info:
                 run.cost_info = cost_info
             if initial_context:
-                run.initial_context = initial_context
+                # Merge initial context patches so independent call-start/runtime
+                # writers do not erase keys stored earlier in the run lifecycle.
+                run.initial_context = {
+                    **(run.initial_context or {}),
+                    **initial_context,
+                }
             if gathered_context:
                 # Lets merge the incoming gathered context keys with the existing ones
-                run.gathered_context = {
+                merged = {
                     **run.gathered_context,
                     **gathered_context,
                 }
+                # `call_tags` is a list, so the key merge above replaces it
+                # wholesale. Two writers each hold their own snapshot of a
+                # finishing run -- the engine's `_gathered_context` and the copy
+                # `on_pipeline_finished` takes via `get_gathered_context` -- and
+                # whichever lands second was dropping the other's tags. Union
+                # them so a call keeps both its disposition and `user_speech`.
+                tags = append_unique_tags(
+                    run.gathered_context.get("call_tags"),
+                    gathered_context.get("call_tags"),
+                )
+                if tags:
+                    merged["call_tags"] = tags
+                run.gathered_context = merged
             if logs:
                 # Lets merge the incoming logs key with existing ones
                 run.logs = {**run.logs, **logs}
             if annotations:
                 run.annotations = {**run.annotations, **annotations}
+            if extra:
+                stored_extra = run.extra or {}
+                completion_exists = bool(stored_extra.get("workflow_completion"))
+                completion_update = extra.get("workflow_completion") or {}
+                initializes_completion = completion_update.get("status") == "pending"
+
+                extra_updates = extra.copy()
+                # Repeated initialization must preserve the worker's progress.
+                if completion_exists and initializes_completion:
+                    extra_updates.pop("workflow_completion")
+
+                run.extra = {**stored_extra, **extra_updates}
             if is_completed:
                 run.is_completed = is_completed
             if state:
@@ -412,10 +542,10 @@ class WorkflowRunClient(BaseDBClient):
             if not workflow_run:
                 return None, None
 
-            if not workflow_run.workflow or not workflow_run.workflow.user:
+            if not workflow_run.workflow:
                 return workflow_run, None
 
-            organization_id = workflow_run.workflow.user.selected_organization_id
+            organization_id = workflow_run.workflow.organization_id
             return workflow_run, organization_id
 
     async def ensure_public_access_token(self, workflow_run_id: int) -> Optional[str]:
@@ -497,3 +627,86 @@ class WorkflowRunClient(BaseDBClient):
                 .limit(1)
             )
             return result.scalars().first()
+
+    async def list_voice_runs_for_workflow(
+        self,
+        workflow_id: int,
+        organization_id: int,
+        limit: int = 10,
+        min_duration_seconds: float = 30.0,
+        disposition_filter: Optional[str] = None,
+    ) -> List[dict]:
+        """Return completed voice runs for a workflow, scoped to an org.
+
+        Restricts to actual voice transports (excludes the text-chat modes)
+        and incomplete runs. Results are ordered newest-first.
+
+        When ``min_duration_seconds > 0``, runs whose ``usage_info`` has no
+        ``call_duration_seconds`` are also excluded (an unknown duration
+        cannot be confirmed to meet the threshold). Pass 0 to include every
+        completed voice run regardless of recorded duration.
+
+        Returns dicts with: id (the run PK, also the Axiom `extra.run_id`
+        correlator), call_type, duration_seconds, disposition, created_at,
+        transcript_url, storage_backend.
+        """
+        # Allowlist of real voice modes, derived from the enum so new
+        # transports are picked up automatically. A denylist misses the
+        # historical uppercase "CHAT" value (WorkflowRunMode.CHAT).
+        voice_modes = [
+            m.value
+            for m in WorkflowRunMode
+            if m not in (WorkflowRunMode.TEXTCHAT, WorkflowRunMode.CHAT)
+        ]
+        async with self.async_session() as session:
+            query = (
+                select(WorkflowRunModel)
+                .join(WorkflowModel, WorkflowRunModel.workflow_id == WorkflowModel.id)
+                .where(
+                    WorkflowRunModel.workflow_id == workflow_id,
+                    WorkflowModel.organization_id == organization_id,
+                    WorkflowRunModel.is_completed == True,
+                    WorkflowRunModel.mode.in_(voice_modes),
+                )
+            )
+
+            if min_duration_seconds > 0:
+                query = query.where(
+                    cast(
+                        WorkflowRunModel.usage_info.op("->>")("call_duration_seconds"),
+                        Float,
+                    )
+                    >= min_duration_seconds
+                )
+
+            if disposition_filter:
+                query = query.where(
+                    WorkflowRunModel.gathered_context.op("->>")(
+                        "mapped_call_disposition"
+                    )
+                    == disposition_filter
+                )
+
+            result = await session.execute(
+                query.order_by(WorkflowRunModel.created_at.desc()).limit(limit)
+            )
+            rows = result.scalars().all()
+
+            return [
+                {
+                    "id": run.id,
+                    "call_type": run.call_type,
+                    "duration_seconds": (run.usage_info or {}).get(
+                        "call_duration_seconds"
+                    ),
+                    "disposition": (run.gathered_context or {}).get(
+                        "mapped_call_disposition"
+                    ),
+                    "created_at": (
+                        run.created_at.isoformat() if run.created_at else None
+                    ),
+                    "transcript_url": run.transcript_url,
+                    "storage_backend": run.storage_backend,
+                }
+                for run in rows
+            ]

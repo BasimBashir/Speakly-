@@ -72,6 +72,20 @@ class NoopFeedbackObserver(BaseObserver):
     def __init__(self, *_args, **_kwargs):
         super().__init__()
 
+    async def log_speech(self, text: str):
+        pass
+
+    async def log_greeting(self, speech):
+        pass
+
+    async def log_background_greeting_speech(
+        self, speech, text: str, started_at: str | None, stopped_at: str | None
+    ) -> None:
+        pass
+
+    def speech_log_context(self):
+        return {}
+
     async def cleanup(self):
         pass
 
@@ -123,13 +137,19 @@ def patch_run_pipeline_externals(
         )
         stack.enter_context(
             patch(
+                "api.services.pipecat.agent_runtime_factory.create_llm_service",
+                _llm_factory,
+            )
+        )
+        stack.enter_context(
+            patch(
                 "api.services.pipecat.run_pipeline.create_stt_service",
                 lambda *_args, **_kwargs: PassthroughProcessor(),
             )
         )
         stack.enter_context(
             patch(
-                "api.services.pipecat.run_pipeline.create_tts_service",
+                "api.services.pipecat.agent_runtime_factory.create_tts_service",
                 _tts_factory,
             )
         )
@@ -158,14 +178,6 @@ def patch_run_pipeline_externals(
             patch(
                 "api.services.pipecat.run_pipeline.RealtimeFeedbackObserver",
                 NoopFeedbackObserver,
-            )
-        )
-        # Disposition mapper would otherwise call out to the LLM.
-        stack.enter_context(
-            patch(
-                "api.services.workflow.pipecat_engine.apply_disposition_mapping",
-                new_callable=AsyncMock,
-                return_value="completed",
             )
         )
         # Capture the PipelineWorker so the test can drive it from outside.
@@ -204,6 +216,7 @@ async def create_workflow_run_rows(
         Tuple of (workflow_run, user, workflow).
     """
     from api.schemas.ai_model_configuration import EffectiveAIModelConfiguration
+    from api.tests.support.model_catalog import seed_default_model_configuration
 
     org = OrganizationModel(provider_id=f"test-org-{provider_id_suffix}")
     async_session.add(org)
@@ -216,10 +229,10 @@ async def create_workflow_run_rows(
     async_session.add(user)
     await async_session.flush()
 
-    await db_session.update_user_configuration(
-        user_id=user.id,
-        configuration=EffectiveAIModelConfiguration.model_validate(USER_CONFIGURATION),
+    user_configuration = EffectiveAIModelConfiguration.model_validate(
+        USER_CONFIGURATION
     )
+    await seed_default_model_configuration(db_session, org.id, user_configuration)
 
     workflow = await db_session.create_workflow(
         name=f"{name_prefix} Workflow",
@@ -233,6 +246,7 @@ async def create_workflow_run_rows(
         workflow_id=workflow.id,
         mode=WorkflowRunMode.SMALLWEBRTC.value,
         user_id=user.id,
+        definition_id=workflow.released_definition_id,
     )
 
     return workflow_run, user, workflow

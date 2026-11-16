@@ -18,7 +18,6 @@ from typing import List
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pipecat.frames.frames import LLMContextFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -29,7 +28,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.tests.mock_transport import MockTransport
 from pipecat.transports.base_transport import TransportParams
 
-from api.services.pipecat.worker_runner import run_pipeline_worker
 from api.services.workflow.pipecat_engine import PipecatEngine
 from api.services.workflow.workflow_graph import WorkflowGraph
 from api.tests.conftest import (
@@ -37,6 +35,7 @@ from api.tests.conftest import (
     END_CALL_SYSTEM_PROMPT,
     START_CALL_SYSTEM_PROMPT,
 )
+from api.tests.pipecat_test_utils import run_engine_test_pipeline
 from pipecat.tests import (
     ContextCapturingMockLLM,
     MockLLMService,
@@ -73,6 +72,7 @@ async def run_pipeline_and_capture_context(
             audio_out_enabled=True,
             audio_in_sample_rate=16000,
             audio_out_sample_rate=16000,
+            audio_out_end_silence_secs=0,
         ),
     )
 
@@ -99,15 +99,16 @@ async def run_pipeline_and_capture_context(
     if set_node_delay > 0:
         original_set_node = engine.set_node
 
-        async def delayed_set_node(node_id: str):
+        async def delayed_set_node(node_id: str, **kwargs):
             await asyncio.sleep(set_node_delay)
-            await original_set_node(node_id)
+            await original_set_node(node_id, **kwargs)
 
         engine.set_node = delayed_set_node
 
     # Create the pipeline
     pipeline = Pipeline(
         [
+            mock_transport.input(),
             llm,
             tts,
             mock_transport.output(),
@@ -118,7 +119,7 @@ async def run_pipeline_and_capture_context(
     # Create pipeline task
     task = PipelineWorker(pipeline, params=PipelineParams(), enable_rtvi=False)
 
-    engine.set_task(task)
+    engine.call_worker = task
 
     # Patch DB calls
     with patch(
@@ -126,22 +127,7 @@ async def run_pipeline_and_capture_context(
         new_callable=AsyncMock,
         return_value=1,
     ):
-        with patch(
-            "api.services.workflow.pipecat_engine.apply_disposition_mapping",
-            new_callable=AsyncMock,
-            return_value="completed",
-        ):
-
-            async def run_pipeline():
-                await run_pipeline_worker(task)
-
-            async def initialize_engine():
-                await asyncio.sleep(0.01)
-                await engine.initialize()
-                await engine.set_node(engine.workflow.start_node_id)
-                await engine.llm.queue_frame(LLMContextFrame(engine.context))
-
-            await asyncio.gather(run_pipeline(), initialize_engine())
+        await run_engine_test_pipeline(task, engine, mock_transport)
 
     return llm, context
 

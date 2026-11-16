@@ -1,14 +1,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from loguru import logger
-from pydantic import ValidationError
 from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.future import select
 
 from api.db.base_client import BaseDBClient
 from api.db.models import UserConfigurationModel, UserModel
-from api.schemas.ai_model_configuration import EffectiveAIModelConfiguration
 
 
 class UserClient(BaseDBClient):
@@ -28,8 +26,6 @@ class UserClient(BaseDBClient):
 
             # Use PostgreSQL's INSERT ... ON CONFLICT DO NOTHING
             # This is atomic and handles race conditions at the database level
-            from sqlalchemy.dialects.postgresql import insert
-
             stmt = insert(UserModel.__table__).values(
                 provider_id=provider_id,
                 created_at=datetime.now(timezone.utc),
@@ -65,79 +61,44 @@ class UserClient(BaseDBClient):
             )
             return result.scalars().first()
 
-    async def get_user_configurations(
-        self, user_id: int
-    ) -> EffectiveAIModelConfiguration:
-        async with self.async_session() as session:
-            result = await session.execute(
-                select(UserConfigurationModel).where(
-                    UserConfigurationModel.user_id == user_id
-                )
+    async def _get_user_configuration_row(
+        self, session, user_id: int, key: str
+    ) -> UserConfigurationModel | None:
+        result = await session.execute(
+            select(UserConfigurationModel).where(
+                UserConfigurationModel.user_id == user_id,
+                UserConfigurationModel.key == key,
             )
-            configuration_obj = result.scalars().first()
-            if not configuration_obj:
-                return EffectiveAIModelConfiguration()
-
-            try:
-                return EffectiveAIModelConfiguration.model_validate(
-                    {
-                        **configuration_obj.configuration,
-                        "last_validated_at": configuration_obj.last_validated_at,
-                    }
-                )
-            except ValidationError as e:
-                # If configuration contains an unsupported provider,
-                # return a default configuration without failing
-                logger.warning(
-                    f"Failed to validate user configuration for user {user_id}: {e}. "
-                    "Returning default configuration."
-                )
-                return EffectiveAIModelConfiguration()
-
-    async def update_user_configuration(
-        self, user_id: int, configuration: EffectiveAIModelConfiguration
-    ) -> EffectiveAIModelConfiguration:
-        async with self.async_session() as session:
-            result = await session.execute(
-                select(UserConfigurationModel).where(
-                    UserConfigurationModel.user_id == user_id
-                )
-            )
-            configuration_obj = result.scalars().first()
-            if not configuration_obj:
-                configuration_obj = UserConfigurationModel(
-                    user_id=user_id, configuration=configuration.model_dump()
-                )
-                session.add(configuration_obj)
-            else:
-                configuration_obj.configuration = configuration.model_dump()
-            try:
-                await session.commit()
-            except Exception as e:
-                await session.rollback()
-                raise e
-            await session.refresh(configuration_obj)
-        return EffectiveAIModelConfiguration.model_validate(
-            configuration_obj.configuration
         )
+        return result.scalars().first()
 
-    async def update_user_configuration_last_validated_at(self, user_id: int) -> None:
+    async def get_user_configuration_value(self, user_id: int, key: str) -> dict | None:
+        """Get the JSON value stored for a user under `key`, or None."""
         async with self.async_session() as session:
-            result = await session.execute(
-                select(UserConfigurationModel).where(
-                    UserConfigurationModel.user_id == user_id
-                )
+            row = await self._get_user_configuration_row(session, user_id, key)
+            return row.configuration if row else None
+
+    async def upsert_user_configuration_value(
+        self, user_id: int, key: str, value: dict
+    ) -> dict:
+        """Create or update the JSON value stored for a user under `key`."""
+        async with self.async_session() as session:
+            stmt = insert(UserConfigurationModel.__table__).values(
+                user_id=user_id,
+                key=key,
+                configuration=value,
             )
-            configuration_obj = result.scalars().first()
-            if not configuration_obj:
-                raise ValueError(f"User configuration with ID {user_id} not found")
-            configuration_obj.last_validated_at = datetime.now()
+            stmt = stmt.on_conflict_do_update(
+                constraint="_user_configuration_key_uc",
+                set_={"configuration": stmt.excluded.configuration},
+            ).returning(UserConfigurationModel.configuration)
             try:
+                result = await session.execute(stmt)
                 await session.commit()
             except Exception as e:
                 await session.rollback()
                 raise e
-            await session.refresh(configuration_obj)
+            return result.scalar_one()
 
     async def update_user_selected_organization(
         self, user_id: int, organization_id: int

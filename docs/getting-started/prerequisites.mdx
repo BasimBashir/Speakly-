@@ -74,6 +74,8 @@ Dograh images are available from two registries:
 - **GitHub Container Registry (Default)**: `ghcr.io/dograh-hq` - Recommended for most users
 - **Docker Hub**: `dograhai` - Alternative registry
 
+Both registries also host the bundled MinIO image (`minio`), so `REGISTRY` applies to it as well.
+
 To use a specific registry, set the `REGISTRY` environment variable when running the startup script:
 
 <CodeGroup>
@@ -86,11 +88,9 @@ REGISTRY=dograhai ./start_docker.sh
 ```
 ```powershell Windows
 # Using GitHub Container Registry (recommended)
-$env:REGISTRY = 'ghcr.io/dograh-hq'
-.\start_docker.ps1
+$env:REGISTRY = 'ghcr.io/dograh-hq'; .\start_docker.ps1
 
 # Using Docker Hub
-$env:REGISTRY = 'dograhai'
-.\start_docker.ps1
+$env:REGISTRY = 'dograhai'; .\start_docker.ps1
 ```
 </CodeGroup>

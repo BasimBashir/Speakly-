@@ -16,7 +16,6 @@ import pytest
 from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     Frame,
-    LLMContextFrame,
     TranscriptionFrame,
     UserSpeakingFrame,
     UserStartedSpeakingFrame,
@@ -42,9 +41,9 @@ from pipecat.turns.user_stop import ExternalUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.utils.time import time_now_iso8601
 
-from api.services.pipecat.worker_runner import run_pipeline_worker
 from api.services.workflow.pipecat_engine import PipecatEngine
 from api.services.workflow.workflow_graph import WorkflowGraph
+from api.tests.pipecat_test_utils import run_engine_test_pipeline
 from pipecat.tests import MockLLMService, MockTTSService
 
 
@@ -100,7 +99,7 @@ async def create_pipeline_with_speech_injection(
     speeches: list[str],
     user_idle_timeout: float = 0.2,
     mock_audio_duration_ms: int = 400,
-) -> tuple[PipecatEngine, PipelineWorker, object]:
+) -> tuple[PipecatEngine, MockTransport, PipelineWorker, object]:
     """Create a pipeline with user speech injection and idle handling.
 
     Sets up a realistic pipeline with:
@@ -117,7 +116,7 @@ async def create_pipeline_with_speech_injection(
         mock_audio_duration_ms: TTS audio duration in milliseconds.
 
     Returns:
-        Tuple of (engine, task, user_idle_handler).
+        Tuple of (engine, transport, task, user_idle_handler).
     """
     tts = MockTTSService(
         mock_audio_duration_ms=mock_audio_duration_ms, frame_delay=0.001
@@ -129,6 +128,7 @@ async def create_pipeline_with_speech_injection(
             audio_out_enabled=True,
             audio_in_sample_rate=16000,
             audio_out_sample_rate=16000,
+            audio_out_end_silence_secs=0,
         ),
     )
 
@@ -158,7 +158,7 @@ async def create_pipeline_with_speech_injection(
     user_params = LLMUserAggregatorParams(
         user_turn_strategies=user_turn_strategies,
         user_mute_strategies=user_mute_strategies,
-        user_idle_timeout=user_idle_timeout,
+        user_idle_timeout=0,
     )
 
     assistant_params = LLMAssistantAggregatorParams()
@@ -169,16 +169,8 @@ async def create_pipeline_with_speech_injection(
     user_context_aggregator = context_aggregator.user()
     assistant_context_aggregator = context_aggregator.assistant()
 
-    # Register user idle event handlers
-    user_idle_handler = engine.create_user_idle_handler()
-
-    @user_context_aggregator.event_handler("on_user_turn_idle")
-    async def on_user_turn_idle(aggregator):
-        await user_idle_handler.handle_idle(aggregator)
-
-    @user_context_aggregator.event_handler("on_user_turn_started")
-    async def on_user_turn_started(aggregator, strategy):
-        user_idle_handler.reset()
+    user_idle_handler = engine.call_monitor
+    user_idle_handler.bind_user(user_context_aggregator, idle_timeout=user_idle_timeout)
 
     # Build pipeline:
     # transport.input → speech_injector → user_aggregator → LLM → TTS → transport.output → assistant_aggregator
@@ -187,6 +179,7 @@ async def create_pipeline_with_speech_injection(
             transport.input(),
             user_speech_injector,
             user_context_aggregator,
+            engine.call_monitor,
             mock_llm,
             tts,
             transport.output(),
@@ -195,9 +188,9 @@ async def create_pipeline_with_speech_injection(
     )
 
     task = PipelineWorker(pipeline, params=PipelineParams(), enable_rtvi=False)
-    engine.set_task(task)
+    engine.call_worker = task
 
-    return engine, task, user_idle_handler
+    return engine, transport, task, user_idle_handler
 
 
 class TestUserIdleHandler:
@@ -248,7 +241,12 @@ class TestUserIdleHandler:
 
         llm = MockLLMService(mock_steps=mock_steps, chunk_delay=0.001)
 
-        engine, task, user_idle_handler = await create_pipeline_with_speech_injection(
+        (
+            engine,
+            transport,
+            task,
+            user_idle_handler,
+        ) = await create_pipeline_with_speech_injection(
             workflow=three_node_workflow_no_variable_extraction,
             mock_llm=llm,
             speeches=["Hello", "I need help with my account"],
@@ -261,22 +259,7 @@ class TestUserIdleHandler:
             new_callable=AsyncMock,
             return_value=1,
         ):
-            with patch(
-                "api.services.workflow.pipecat_engine.apply_disposition_mapping",
-                new_callable=AsyncMock,
-                return_value="completed",
-            ):
-
-                async def run_pipeline():
-                    await run_pipeline_worker(task)
-
-                async def initialize_engine():
-                    await asyncio.sleep(0.01)
-                    await engine.initialize()
-                    await engine.set_node(engine.workflow.start_node_id)
-                    await engine.llm.queue_frame(LLMContextFrame(engine.context))
-
-                await asyncio.gather(run_pipeline(), initialize_engine())
+            await run_engine_test_pipeline(task, engine, transport)
 
         # All 5 LLM steps should have been consumed
         assert llm.get_current_step() == 5

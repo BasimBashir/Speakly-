@@ -12,25 +12,86 @@ from loguru import logger
 from pydantic import BaseModel
 
 from api.db import db_client
-from api.enums import WorkflowRunState
+from api.db.workflow_run_client import append_unique_tags
+from api.enums import TelephonyCallStatus, WorkflowRunState
 from api.services.campaign.campaign_call_dispatcher import campaign_call_dispatcher
 from api.services.campaign.campaign_event_publisher import (
-    get_campaign_event_publisher,
+    notify_campaign_call_completed,
 )
-from api.services.campaign.circuit_breaker import circuit_breaker
+from api.services.campaign.campaign_retry import schedule_campaign_retry
+from api.services.workflow.disposition_mapping import map_disposition
+from api.tasks.arq import enqueue_job
+from api.tasks.function_names import FunctionNames
+
+TERMINAL_NOT_CONNECTED_STATUSES = frozenset(
+    {
+        TelephonyCallStatus.FAILED,
+        TelephonyCallStatus.BUSY,
+        TelephonyCallStatus.NO_ANSWER,
+        TelephonyCallStatus.CANCELED,
+        TelephonyCallStatus.ERROR,
+    }
+)
+IN_FLIGHT_STATUSES = frozenset(
+    {
+        TelephonyCallStatus.INITIATED,
+        TelephonyCallStatus.RINGING,
+        TelephonyCallStatus.IN_PROGRESS,
+        TelephonyCallStatus.ANSWERED,
+    }
+)
+RETRYABLE_NOT_CONNECTED_STATUSES = frozenset(
+    {TelephonyCallStatus.BUSY, TelephonyCallStatus.NO_ANSWER}
+)
+
+
+def _status_value(value: object) -> str:
+    status = TelephonyCallStatus.from_raw(value)
+    if status is not None:
+        return status.value
+
+    return str(value or "").lower()
+
+
+def _duration_seconds(duration: str | None) -> int | float:
+    if duration in (None, ""):
+        return 0
+
+    try:
+        parsed = float(duration)
+    except (TypeError, ValueError):
+        return 0
+
+    return int(parsed) if parsed.is_integer() else parsed
+
+
+async def _enqueue_integrations_for_unconnected_run(
+    workflow_run_id: int,
+    status: str,
+) -> None:
+    """Fire post-call integrations (e.g. webhooks) when a call ends before the
+    Pipecat pipeline ever starts.
+
+    Enqueues integrations only -- deliberately *not*
+    ``PROCESS_WORKFLOW_COMPLETION`` -- so an unconnected call still triggers the
+    configured webhooks without incurring platform-usage billing.
+    """
+    await enqueue_job(FunctionNames.RUN_INTEGRATIONS_POST_WORKFLOW_RUN, workflow_run_id)
+    logger.info(
+        f"[run {workflow_run_id}] Enqueued post-call integrations after terminal "
+        f"telephony status: {status}"
+    )
 
 
 class StatusCallbackRequest(BaseModel):
     """Normalized status callback shape used across all telephony providers.
 
-    Per-provider converters live as classmethods (``from_twilio``, ``from_plivo``,
-    ``from_vonage``, ``from_cloudonix_cdr``) so the route handler for each
-    provider can map raw webhook payloads into this shape and hand off to
-    :func:`_process_status_update`.
+    Provider-specific route handlers map raw webhook payloads into this shape,
+    then hand it off to :func:`_process_status_update`.
     """
 
     call_id: str
-    status: str
+    status: TelephonyCallStatus | str
     from_number: Optional[str] = None
     to_number: Optional[str] = None
     direction: Optional[str] = None
@@ -38,102 +99,14 @@ class StatusCallbackRequest(BaseModel):
 
     extra: dict = {}
 
-    @classmethod
-    def from_twilio(cls, data: dict):
-        """Convert Twilio callback to generic format."""
-        return cls(
-            call_id=data.get("CallSid", ""),
-            status=data.get("CallStatus", ""),
-            from_number=data.get("From"),
-            to_number=data.get("To"),
-            direction=data.get("Direction"),
-            duration=data.get("CallDuration") or data.get("Duration"),
-            extra=data,
-        )
-
-    @classmethod
-    def from_plivo(cls, data: dict):
-        """Convert Plivo callback to generic format."""
-        status_map = {
-            "in-progress": "answered",
-            "ringing": "ringing",
-            "ring": "ringing",
-            "completed": "completed",
-            "hangup": "completed",
-            "stopstream": "completed",
-            "busy": "busy",
-            "no-answer": "no-answer",
-            "cancel": "canceled",
-            "cancelled": "canceled",
-            "timeout": "no-answer",
-        }
-        call_status = (data.get("CallStatus") or data.get("Event") or "").lower()
-        return cls(
-            call_id=data.get("CallUUID", "") or data.get("RequestUUID", ""),
-            status=status_map.get(call_status, call_status),
-            from_number=data.get("From"),
-            to_number=data.get("To"),
-            direction=data.get("Direction"),
-            duration=data.get("Duration"),
-            extra=data,
-        )
-
-    @classmethod
-    def from_vonage(cls, data: dict):
-        """Convert Vonage event to generic format."""
-        status_map = {
-            "started": "initiated",
-            "ringing": "ringing",
-            "answered": "answered",
-            "complete": "completed",
-            "failed": "failed",
-            "busy": "busy",
-            "timeout": "no-answer",
-            "rejected": "busy",
-        }
-
-        return cls(
-            call_id=data.get("uuid", ""),
-            status=status_map.get(data.get("status", ""), data.get("status", "")),
-            from_number=data.get("from"),
-            to_number=data.get("to"),
-            direction=data.get("direction"),
-            duration=data.get("duration"),
-            extra=data,
-        )
-
-    @classmethod
-    def from_cloudonix_cdr(cls, data: dict):
-        """Convert Cloudonix CDR to generic format."""
-        disposition_map = {
-            "ANSWER": "completed",
-            "BUSY": "busy",
-            "CANCEL": "canceled",
-            "FAILED": "failed",
-            "CONGESTION": "failed",
-            "NOANSWER": "no-answer",
-        }
-
-        disposition = data.get("disposition") or ""
-        status = disposition_map.get(disposition.upper(), disposition.lower())
-        session = data.get("session")
-        call_id = session.get("token") if isinstance(session, dict) else ""
-
-        return cls(
-            call_id=call_id or "",
-            status=status,
-            from_number=data.get("from"),
-            to_number=data.get("to"),
-            duration=str(data.get("billsec") or data.get("duration") or 0),
-            extra=data,
-        )
-
 
 async def _process_status_update(workflow_run_id: int, status: StatusCallbackRequest):
     """Process status updates from telephony providers.
 
     Idempotent: handles repeated callbacks (e.g. from both webhook and CDR).
     """
+    normalized_status = TelephonyCallStatus.from_raw(status.status)
+    status_value = _status_value(status.status)
     workflow_run = await db_client.get_workflow_run_by_id(workflow_run_id)
     if not workflow_run:
         logger.warning(
@@ -143,7 +116,7 @@ async def _process_status_update(workflow_run_id: int, status: StatusCallbackReq
 
     telephony_callback_logs = workflow_run.logs.get("telephony_status_callbacks", [])
     telephony_callback_log = {
-        "status": status.status,
+        "status": status_value,
         "timestamp": datetime.now(UTC).isoformat(),
         "call_id": status.call_id,
         "duration": status.duration,
@@ -156,16 +129,15 @@ async def _process_status_update(workflow_run_id: int, status: StatusCallbackReq
         logs={"telephony_status_callbacks": telephony_callback_logs},
     )
 
-    if status.status == "completed":
+    if normalized_status == TelephonyCallStatus.COMPLETED:
         logger.info(
             f"[run {workflow_run_id}] Call completed with duration: {status.duration}s"
         )
 
-        if workflow_run.campaign_id:
-            await campaign_call_dispatcher.release_call_slot(workflow_run_id)
-            await circuit_breaker.record_and_evaluate(
-                workflow_run.campaign_id, is_failure=False
-            )
+        await campaign_call_dispatcher.release_call_slot(workflow_run_id)
+
+        # Pipeline finalization owns campaign health accounting. A completed
+        # phone call can still have ended because STT/LLM/TTS failed.
 
         if workflow_run.state != WorkflowRunState.COMPLETED.value:
             await db_client.update_workflow_run(
@@ -174,28 +146,24 @@ async def _process_status_update(workflow_run_id: int, status: StatusCallbackReq
                 state=WorkflowRunState.COMPLETED.value,
             )
 
-    elif status.status in ["failed", "busy", "no-answer", "canceled", "error"]:
+    elif normalized_status in TERMINAL_NOT_CONNECTED_STATUSES:
         logger.warning(
-            f"[run {workflow_run_id}] Call failed with status: {status.status}"
+            f"[run {workflow_run_id}] Call failed with status: {normalized_status.value}"
         )
 
-        if workflow_run.campaign_id:
-            await campaign_call_dispatcher.release_call_slot(workflow_run_id)
-            is_failure = status.status in ("error", "failed")
-            await circuit_breaker.record_and_evaluate(
-                workflow_run.campaign_id,
-                is_failure=is_failure,
-                workflow_run_id=workflow_run_id if is_failure else None,
-                reason=status.status if is_failure else None,
-            )
+        await campaign_call_dispatcher.release_call_slot(workflow_run_id)
 
-        if status.status in ["busy", "no-answer"] and workflow_run.campaign_id:
-            publisher = await get_campaign_event_publisher()
-            await publisher.publish_retry_needed(
-                workflow_run_id=workflow_run_id,
-                reason=status.status.replace("-", "_"),
-                campaign_id=workflow_run.campaign_id,
-                queued_run_id=workflow_run.queued_run_id,
+        if (
+            normalized_status in RETRYABLE_NOT_CONNECTED_STATUSES
+            and workflow_run.campaign_id
+        ):
+            # Persist the retry before making this run terminal. Completion
+            # checks must never observe an idle campaign while a retry event
+            # is still waiting to create its queue row.
+            await schedule_campaign_retry(
+                workflow_run,
+                normalized_status.value.replace("-", "_"),
+                organization_id=workflow_run.workflow.organization_id,
             )
 
         call_tags = (
@@ -203,18 +171,68 @@ async def _process_status_update(workflow_run_id: int, status: StatusCallbackReq
             if workflow_run.gathered_context
             else []
         )
-        call_tags.extend(["not_connected", f"telephony_{status.status.lower()}"])
-
-        await db_client.update_workflow_run(
-            run_id=workflow_run_id,
-            is_completed=True,
-            state=WorkflowRunState.COMPLETED.value,
-            gathered_context={"call_tags": call_tags},
+        call_tags = append_unique_tags(
+            call_tags,
+            ["not_connected", f"telephony_{normalized_status.value}"],
         )
-    elif status.status in ["in-progress", "initiated", "ringing"]:
+
+        gathered_context = {
+            "call_tags": call_tags,
+            "call_disposition": normalized_status.value,
+            "mapped_call_disposition": await map_disposition(
+                workflow_run.workflow.organization_id, normalized_status.value
+            ),
+            # A call that never connected has no conversation to derive an
+            # outcome from, so mechanism and disposition are the same value
+            # here. Recorded anyway so `call_status` is populated for every
+            # run and not just the ones that reached the engine.
+            "call_status": normalized_status.value,
+        }
+        if status.call_id:
+            gathered_context["call_id"] = status.call_id
+
+        # Surface the Twilio failure detail so webhooks can tell an invalid
+        # number from a temporarily-unavailable one. Twilio puts these on the
+        # terminal callback; providers that don't simply omit them.
+        sip_code = status.extra.get("SipResponseCode")
+        error_code = status.extra.get("ErrorCode")
+        if sip_code:
+            gathered_context["telephony_sip_code"] = str(sip_code)
+        if error_code:
+            gathered_context["telephony_error_code"] = str(error_code)
+
+        should_run_post_call_integrations = (
+            workflow_run.state == WorkflowRunState.INITIALIZED.value
+            and not workflow_run.is_completed
+        )
+
+        update_kwargs = {
+            "run_id": workflow_run_id,
+            "is_completed": True,
+            "state": WorkflowRunState.COMPLETED.value,
+            "gathered_context": gathered_context,
+        }
+        if should_run_post_call_integrations:
+            update_kwargs["usage_info"] = {
+                "call_duration_seconds": _duration_seconds(status.duration)
+            }
+
+        await db_client.update_workflow_run(**update_kwargs)
+
+        if should_run_post_call_integrations:
+            await _enqueue_integrations_for_unconnected_run(
+                workflow_run_id, normalized_status.value
+            )
+    elif normalized_status in IN_FLIGHT_STATUSES:
         # No-op while the call is in flight.
         pass
     else:
         logger.warning(
             f"[run {workflow_run_id}] Unexpected status update: {status.status}"
         )
+
+    if (
+        normalized_status == TelephonyCallStatus.COMPLETED
+        or normalized_status in TERMINAL_NOT_CONNECTED_STATUSES
+    ):
+        await notify_campaign_call_completed(workflow_run.campaign_id, workflow_run_id)

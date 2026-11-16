@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowLeft, Code, ExternalLink, Loader2, Save } from "lucide-react";
+import { ArrowLeft, Code, ExternalLink, FlaskConical, Loader2, Save } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
     getToolApiV1ToolsToolUuidGet,
+    getWorkflowsSummaryApiV1WorkflowSummaryGet,
     listRecordingsApiV1WorkflowRecordingsGet,
     updateToolApiV1ToolsToolUuidPut,
 } from "@/client/sdk.gen";
@@ -14,7 +15,8 @@ import type {
     HttpApiToolDefinition,
     RecordingResponseSchema,
     ToolResponse,
-    TransferCallConfig as APITransferCallConfig,
+    TransferAgentConfig,
+    TransferCallConfig,
     UpdateToolRequest,
 } from "@/client/types.gen";
 import {
@@ -26,6 +28,9 @@ import {
     type ToolParameter,
     validateUrl,
 } from "@/components/http";
+import { PageShell } from "@/components/layout/PageShell";
+import { loadToolMessages, serializeToolMessages, singleStartMessages, type ToolMessagesForm, validateToolMessages } from "@/components/tools/toolMessages";
+import { ToolMessagesEditor } from "@/components/tools/ToolMessagesEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -39,21 +44,41 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TOOL_DOCUMENTATION_URLS } from "@/constants/documentation";
 import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
 
 import {
+    type ContextDestinationRuleRow,
+    contextMappingToRuleRows,
+    createContextDestinationRuleRow,
     createMcpDefinition,
+    createTransferAgentDefinition,
     DEFAULT_END_CALL_REASON_DESCRIPTION,
+    DEFAULT_TRANSFER_AGENT_MESSAGE,
+    DEFAULT_TRANSFER_INTRODUCTION_PROMPT,
     type EndCallMessageType,
     getCategoryConfig,
     getToolTypeLabel,
     MCP_URL_PATTERN,
     renderToolIcon,
+    ruleRowsToContextMappingRules,
     type ToolCategory,
+    type TransferDestinationSource,
 } from "../config";
-import { BuiltinToolConfig, EndCallToolConfig, HttpApiToolConfig, TransferCallToolConfig } from "./components";
+import {
+    buildHttpToolTestSnapshot,
+    BuiltinToolConfig,
+    EndCallToolConfig,
+    HttpApiToolConfig,
+    type HttpBodyFormat,
+    HttpToolTestDialog,
+    TransferAgentToolConfig,
+    type TransferAgentWorkflowOption,
+    TransferCallToolConfig,
+    type TransferGreetingMode,
+} from "./components";
 
 function normalizeParameterType(value: string | null | undefined): ParameterType {
     switch (value) {
@@ -67,6 +92,11 @@ function normalizeParameterType(value: string | null | undefined): ParameterType
     }
 }
 
+function headersToRows(headers: Record<string, string> | undefined | null): KeyValueItem[] {
+    if (!headers) return [];
+    return Object.entries(headers).map(([key, value]) => ({ key, value }));
+}
+
 export default function ToolDetailPage() {
     const { toolUuid } = useParams<{ toolUuid: string }>();
     const { user, getAccessToken, redirectToLogin, loading } = useAuth();
@@ -78,6 +108,8 @@ export default function ToolDetailPage() {
     const [error, setError] = useState<string | null>(null);
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [showCodeDialog, setShowCodeDialog] = useState(false);
+    const [showTestDialog, setShowTestDialog] = useState(false);
+    const [savedHttpTestSnapshot, setSavedHttpTestSnapshot] = useState<string | null>(null);
 
     // Common form state
     const [name, setName] = useState("");
@@ -94,6 +126,11 @@ export default function ToolDetailPage() {
     const [parameters, setParameters] = useState<ToolParameter[]>([]);
     const [presetParameters, setPresetParameters] = useState<PresetToolParameter[]>([]);
     const [timeoutMs, setTimeoutMs] = useState(5000);
+    const [bodyTemplateEnabled, setBodyTemplateEnabled] = useState(false);
+    const [bodyTemplate, setBodyTemplate] = useState<Record<string, unknown> | null>(null);
+    const [isBodyTemplateValid, setIsBodyTemplateValid] = useState(true);
+    const [bodyFormat, setBodyFormat] = useState<HttpBodyFormat>("json");
+    const bodyTemplateSupported = ["POST", "PUT", "PATCH"].includes(httpMethod);
 
     // End Call form state
     const [endCallMessageType, setEndCallMessageType] = useState<EndCallMessageType>("none");
@@ -108,15 +145,49 @@ export default function ToolDetailPage() {
         }
     };
 
+    // Transfer To Agent form state
+    const [transferAgentWorkflowId, setTransferAgentWorkflowId] = useState("");
+    const [transferAgentMessage, setTransferAgentMessage] = useState(
+        DEFAULT_TRANSFER_AGENT_MESSAGE,
+    );
+    const [transferAgentGreetingMode, setTransferAgentGreetingMode] =
+        useState<TransferGreetingMode>("start_greeting");
+    const [transferAgentIntroduction, setTransferAgentIntroduction] = useState("");
+    const [agentOptions, setAgentOptions] = useState<TransferAgentWorkflowOption[]>([]);
+    const [agentOptionsLoading, setAgentOptionsLoading] = useState(false);
+
     // Transfer Call form state
+    const [transferDestinationSource, setTransferDestinationSource] =
+        useState<TransferDestinationSource>("static");
     const [transferDestination, setTransferDestination] = useState("");
     const [transferMessageType, setTransferMessageType] = useState<EndCallMessageType>("none");
     const [transferTimeout, setTransferTimeout] = useState(30);
+    const [transferCallDisposition, setTransferCallDisposition] = useState("");
+    const [transferIntroductionEnabled, setTransferIntroductionEnabled] = useState(false);
+    const [transferIntroductionPrompt, setTransferIntroductionPrompt] = useState(
+        DEFAULT_TRANSFER_INTRODUCTION_PROMPT,
+    );
     const [transferAudioRecordingId, setTransferAudioRecordingId] = useState("");
+    const [transferResolverUrl, setTransferResolverUrl] = useState("");
+    const [transferResolverCredentialUuid, setTransferResolverCredentialUuid] = useState("");
+    const [transferResolverHeaders, setTransferResolverHeaders] = useState<KeyValueItem[]>([]);
+    const [transferResolverTimeoutMs, setTransferResolverTimeoutMs] = useState(3000);
+    const [transferResolverWaitMessage, setTransferResolverWaitMessage] = useState("");
+    const [transferParameters, setTransferParameters] = useState<ToolParameter[]>([]);
+    const [transferPresetParameters, setTransferPresetParameters] = useState<PresetToolParameter[]>([]);
+    const [transferContextDestinationRules, setTransferContextDestinationRules] =
+        useState<ContextDestinationRuleRow[]>([]);
+    const [transferFallbackDestination, setTransferFallbackDestination] = useState("");
 
-    // HTTP API form state - custom message type
-    const [customMessageType, setCustomMessageType] = useState<'text' | 'audio'>('text');
-    const [customMessageRecordingId, setCustomMessageRecordingId] = useState("");
+    const handleTransferDestinationSourceChange = (source: TransferDestinationSource) => {
+        setTransferDestinationSource(source);
+        // Start context routing with one editable rule instead of an empty tab.
+        if (source === "context_mapping" && transferContextDestinationRules.length === 0) {
+            setTransferContextDestinationRules([createContextDestinationRuleRow()]);
+        }
+    };
+
+    const [messages, setMessages] = useState<ToolMessagesForm>({ start: null, delayed: [] });
 
     // MCP form state
     const [mcpUrl, setMcpUrl] = useState("");
@@ -164,38 +235,91 @@ export default function ToolDetailPage() {
         setName(tool.name);
         setDescription(tool.description || "");
 
+        const loadedMessages = loadToolMessages(tool.definition);
+        setMessages(loadedMessages);
+        const startMessage = loadedMessages.start?.variants[0];
+        const messageType = startMessage ? (startMessage.type === "text" ? "custom" : "audio") : "none";
+        const text = startMessage?.type === "text" ? startMessage.text : "";
+        const recordingId = startMessage?.type === "audio" ? String(startMessage.recording_id) : "";
+        setEndCallMessageType(messageType);
+        setTransferMessageType(messageType);
+        setCustomMessage(text);
+        setAudioRecordingId(recordingId);
+        setTransferAudioRecordingId(recordingId);
+        setTransferAgentMessage(text);
+
         if (tool.category === "end_call") {
             // Populate end call specific fields
             const config = tool.definition?.config as EndCallConfig | undefined;
             if (config) {
-                setEndCallMessageType(config.messageType || "none");
-                setCustomMessage(config.customMessage || "");
-                setAudioRecordingId(config.audioRecordingId || "");
                 setEndCallReason(config.endCallReason ?? false);
                 setEndCallReasonDescription(config.endCallReasonDescription || "");
             } else {
-                setEndCallMessageType("none");
-                setCustomMessage("");
-                setAudioRecordingId("");
                 setEndCallReason(false);
                 setEndCallReasonDescription("");
             }
         } else if (tool.category === "transfer_call") {
             // Populate transfer call specific fields
-            const config = tool.definition?.config as APITransferCallConfig | undefined;
+            const config = tool.definition?.config as TransferCallConfig | undefined;
             if (config) {
+                const resolver = config.resolver || undefined;
+                setTransferDestinationSource(config.destination_source || (resolver ? "dynamic" : "static"));
                 setTransferDestination(config.destination || "");
-                setTransferMessageType(config.messageType || "none");
-                setCustomMessage(config.customMessage || "");
-                setTransferAudioRecordingId(config.audioRecordingId || "");
                 setTransferTimeout(config.timeout ?? 30);
+                setTransferCallDisposition(config.call_disposition || "");
+                setTransferIntroductionEnabled(config.introduction_enabled ?? false);
+                setTransferIntroductionPrompt(config.introduction_prompt || DEFAULT_TRANSFER_INTRODUCTION_PROMPT);
+                setTransferResolverUrl(resolver?.url || "");
+                setTransferResolverCredentialUuid(resolver?.credential_uuid || "");
+                setTransferResolverHeaders(headersToRows(resolver?.headers));
+                setTransferResolverTimeoutMs(resolver?.timeout_ms ?? 3000);
+                setTransferResolverWaitMessage(resolver?.wait_message || "");
+                setTransferParameters(
+                    (resolver?.parameters || config.parameters || []).map((p) => ({
+                        name: p.name || "",
+                        type: normalizeParameterType(p.type),
+                        description: p.description || "",
+                        required: p.required ?? true,
+                    })),
+                );
+                setTransferPresetParameters(
+                    (resolver?.preset_parameters || []).map((p) => ({
+                        name: p.name || "",
+                        type: normalizeParameterType(p.type),
+                        valueTemplate: p.value_template || "",
+                        required: p.required ?? true,
+                    })),
+                );
+                setTransferContextDestinationRules(
+                    contextMappingToRuleRows(config.context_mapping)
+                );
+                setTransferFallbackDestination(
+                    config.context_mapping?.fallback_destination || ""
+                );
             } else {
+                setTransferDestinationSource("static");
                 setTransferDestination("");
-                setTransferMessageType("none");
-                setCustomMessage("");
-                setTransferAudioRecordingId("");
                 setTransferTimeout(30);
+                setTransferCallDisposition("");
+                setTransferIntroductionEnabled(false);
+                setTransferIntroductionPrompt(DEFAULT_TRANSFER_INTRODUCTION_PROMPT);
+                setTransferResolverUrl("");
+                setTransferResolverCredentialUuid("");
+                setTransferResolverHeaders([]);
+                setTransferResolverTimeoutMs(3000);
+                setTransferResolverWaitMessage("");
+                setTransferParameters([]);
+                setTransferPresetParameters([]);
+                setTransferContextDestinationRules([]);
+                setTransferFallbackDestination("");
             }
+        } else if (tool.category === "transfer_agent") {
+            const config = tool.definition?.config as TransferAgentConfig | undefined;
+            setTransferAgentWorkflowId(
+                config?.workflow_id ? String(config.workflow_id) : "",
+            );
+            setTransferAgentGreetingMode(config?.greeting_mode ?? "start_greeting");
+            setTransferAgentIntroduction(config?.introduction ?? "");
         } else if (tool.category === "mcp") {
             // Populate MCP specific fields
             const config = tool.definition?.config as
@@ -218,52 +342,74 @@ export default function ToolDetailPage() {
             // Populate HTTP API specific fields
             const config = tool.definition?.config as HttpApiToolDefinition["config"] | undefined;
             if (config) {
-                setHttpMethod((config.method as HttpMethod) || "POST");
-                setUrl(config.url || "");
-                setCredentialUuid(config.credential_uuid || "");
-                setTimeoutMs(config.timeout_ms || 5000);
-                setCustomMessage(config.customMessage || "");
-                setCustomMessageType(config.customMessageType || "text");
-                setCustomMessageRecordingId(config.customMessageRecordingId || "");
+                const loadedHttpMethod = (config.method as HttpMethod) || "POST";
+                const loadedUrl = config.url || "";
+                const loadedCredentialUuid = config.credential_uuid || "";
+                const loadedTimeoutMs = config.timeout_ms || 5000;
+                const loadedBodyTemplate = config.body_template ?? null;
+                const loadedBodyFormat = config.body_format ?? "json";
+                setHttpMethod(loadedHttpMethod);
+                setUrl(loadedUrl);
+                setCredentialUuid(loadedCredentialUuid);
+                setTimeoutMs(loadedTimeoutMs);
+                setBodyTemplateEnabled(loadedBodyTemplate !== null);
+                setBodyTemplate(loadedBodyTemplate);
+                setIsBodyTemplateValid(true);
+                setBodyFormat(loadedBodyFormat);
 
                 // Convert headers object to array
-                if (config.headers) {
-                    setHeaders(
-                        Object.entries(config.headers).map(([key, value]) => ({
-                            key,
-                            value: value as string,
-                        }))
-                    );
-                } else {
-                    setHeaders([]);
-                }
+                const loadedHeaders = config.headers
+                    ? Object.entries(config.headers).map(([key, value]) => ({
+                        key,
+                        value: value as string,
+                    }))
+                    : [];
+                setHeaders(loadedHeaders);
 
                 // Load parameters
+                let loadedParameters: ToolParameter[] = [];
                 if (config.parameters && Array.isArray(config.parameters)) {
-                    setParameters(
-                        config.parameters.map((p) => ({
-                            name: p.name || "",
-                            type: normalizeParameterType(p.type),
-                            description: p.description || "",
-                            required: p.required ?? true,
-                        }))
-                    );
+                    loadedParameters = config.parameters.map((p) => ({
+                        name: p.name || "",
+                        type: normalizeParameterType(p.type),
+                        description: p.description || "",
+                        required: p.required ?? true,
+                    }));
+                    setParameters(loadedParameters);
                 } else {
                     setParameters([]);
                 }
 
+                let loadedPresetParameters: PresetToolParameter[] = [];
                 if (config.preset_parameters && Array.isArray(config.preset_parameters)) {
-                    setPresetParameters(
-                        config.preset_parameters.map((p) => ({
-                            name: p.name || "",
-                            type: normalizeParameterType(p.type),
-                            valueTemplate: p.value_template || "",
-                            required: p.required ?? true,
-                        }))
-                    );
+                    loadedPresetParameters = config.preset_parameters.map((p) => ({
+                        name: p.name || "",
+                        type: normalizeParameterType(p.type),
+                        valueTemplate: p.value_template || "",
+                        required: p.required ?? true,
+                    }));
+                    setPresetParameters(loadedPresetParameters);
                 } else {
                     setPresetParameters([]);
                 }
+
+                setSavedHttpTestSnapshot(
+                    buildHttpToolTestSnapshot({
+                        name: tool.name,
+                        description: tool.description || "",
+                        httpMethod: loadedHttpMethod,
+                        url: loadedUrl,
+                        credentialUuid: loadedCredentialUuid,
+                        headers: loadedHeaders,
+                        parameters: loadedParameters,
+                        presetParameters: loadedPresetParameters,
+                        bodyTemplateEnabled: loadedBodyTemplate !== null,
+                        bodyTemplate: loadedBodyTemplate,
+                        bodyFormat: loadedBodyFormat,
+                        timeoutMs: loadedTimeoutMs,
+                        messages: serializeToolMessages(loadedMessages),
+                    })
+                );
             }
         }
     };
@@ -282,27 +428,134 @@ export default function ToolDetailPage() {
         }
     }, [loading, user]);
 
+    const fetchAgentOptions = useCallback(async () => {
+        if (loading || !user) return;
+        setAgentOptionsLoading(true);
+        try {
+            const response = await getWorkflowsSummaryApiV1WorkflowSummaryGet({});
+            // The generated client resolves rather than throws on a 4xx/5xx,
+            // so the catch below only covers network failures.
+            if (response.error || !response.data) {
+                setAgentOptions([]);
+                return;
+            }
+            setAgentOptions(
+                response.data.map((workflow) => ({
+                    id: workflow.id,
+                    name: workflow.name,
+                })),
+            );
+        } catch {
+            // Left non-fatal: the picker shows no agents and saving is blocked
+            // for want of a destination, which is the right outcome anyway.
+            setAgentOptions([]);
+        } finally {
+            setAgentOptionsLoading(false);
+        }
+    }, [loading, user]);
+
     useEffect(() => {
         fetchTool();
         fetchRecordings();
     }, [fetchTool, fetchRecordings]);
 
+    useEffect(() => {
+        if (tool?.category === "transfer_agent") {
+            fetchAgentOptions();
+        }
+    }, [tool?.category, fetchAgentOptions]);
+
     const handleSave = async () => {
         if (!tool) return;
+
+        const normalizedTransferDestination = transferDestination.trim();
 
         // Validation based on tool type
         if (tool.category === "calculator") {
             // No validation needed for built-in tools
-        } else if (tool.category === "transfer_call") {
-            // Validate destination for Transfer Call tools (supports both E.164 and SIP endpoints)
-            const e164Pattern = /^\+[1-9]\d{1,14}$/;
-            const sipPattern = /^(PJSIP|SIP)\/[\w\-\.@]+$/i;
-            const isValidE164 = e164Pattern.test(transferDestination);
-            const isValidSip = sipPattern.test(transferDestination);
-
-            if (!transferDestination || (!isValidE164 && !isValidSip)) {
-                setError("Please enter a valid phone number (E.164 format) or SIP endpoint (e.g., PJSIP/1234)");
+        } else if (tool.category === "transfer_agent") {
+            if (!transferAgentWorkflowId) {
+                setError("Choose the agent to transfer to");
                 return;
+            }
+            if (
+                transferAgentGreetingMode === "introduce_and_continue" &&
+                !transferAgentIntroduction.trim()
+            ) {
+                setError("Enter what the destination agent should say when it picks up");
+                return;
+            }
+        } else if (tool.category === "transfer_call") {
+            if (transferDestinationSource === "static" && !normalizedTransferDestination) {
+                setError("Please enter a transfer destination");
+                return;
+            }
+            if (transferDestinationSource === "dynamic") {
+                const resolverUrlValidation = validateUrl(transferResolverUrl);
+                if (!resolverUrlValidation.valid) {
+                    setError(resolverUrlValidation.error || "Invalid resolver URL");
+                    return;
+                }
+
+                const invalidTransferParams = transferParameters.filter(
+                    (p) => !p.name.trim() || !p.description.trim()
+                );
+                if (invalidTransferParams.length > 0) {
+                    setError("All resolver arguments must have a name and description");
+                    return;
+                }
+                const transferParamNames = transferParameters
+                    .map((p) => p.name.trim())
+                    .filter(Boolean);
+                if (new Set(transferParamNames).size !== transferParamNames.length) {
+                    setError("Resolver argument names must be unique");
+                    return;
+                }
+                const invalidPresetTransferParams = transferPresetParameters.filter(
+                    (p) => !p.name.trim() || !p.valueTemplate.trim()
+                );
+                if (invalidPresetTransferParams.length > 0) {
+                    setError("All resolver preset parameters must have a name and a value");
+                    return;
+                }
+                const transferPresetParamNames = transferPresetParameters
+                    .map((p) => p.name.trim())
+                    .filter(Boolean);
+                if (new Set(transferPresetParamNames).size !== transferPresetParamNames.length) {
+                    setError("Resolver preset parameter names must be unique");
+                    return;
+                }
+            }
+            if (transferDestinationSource === "context_mapping") {
+                if (transferContextDestinationRules.length === 0) {
+                    setError("Add at least one context routing rule");
+                    return;
+                }
+                for (const [index, rule] of transferContextDestinationRules.entries()) {
+                    const ruleLabel = `rule ${index + 1}`;
+                    if (!rule.context_path.trim()) {
+                        setError(`Please enter a context field for ${ruleLabel}`);
+                        return;
+                    }
+                    if (
+                        rule.routes.length === 0 ||
+                        rule.routes.some(
+                            (route) => !route.context_value.trim() || !route.destination.trim()
+                        )
+                    ) {
+                        setError(
+                            `Add at least one complete context value to destination mapping in ${ruleLabel}`
+                        );
+                        return;
+                    }
+                    const routeValues = rule.routes.map((route) =>
+                        route.context_value.trim().toLocaleLowerCase()
+                    );
+                    if (new Set(routeValues).size !== routeValues.length) {
+                        setError(`Destination mapping context values must be unique in ${ruleLabel}`);
+                        return;
+                    }
+                }
             }
         } else if (tool.category === "mcp") {
             // Validate MCP server URL (must be http(s))
@@ -328,6 +581,11 @@ export default function ToolDetailPage() {
                 setError("All parameters must have a name");
                 return;
             }
+            const paramNames = parameters.map((p) => p.name.trim()).filter(Boolean);
+            if (new Set(paramNames).size !== paramNames.length) {
+                setError("Parameter names must be unique");
+                return;
+            }
 
             const invalidPresetParams = presetParameters.filter(
                 (p) => !p.name.trim() || !p.valueTemplate.trim()
@@ -336,7 +594,25 @@ export default function ToolDetailPage() {
                 setError("All preset parameters must have a name and a value");
                 return;
             }
+            if (
+                bodyTemplateSupported &&
+                bodyTemplateEnabled &&
+                (!isBodyTemplateValid || bodyTemplate === null)
+            ) {
+                setError("Body template must be a valid JSON object");
+                return;
+            }
         }
+
+        const controlMessages = tool.category === "end_call"
+            ? singleStartMessages(endCallMessageType, customMessage, audioRecordingId)
+            : tool.category === "transfer_call"
+                ? singleStartMessages(transferMessageType, customMessage, transferAudioRecordingId)
+                : singleStartMessages(transferAgentMessage.trim() ? "custom" : "none", transferAgentMessage.trim());
+        const messageError = validateToolMessages(
+            tool.category === "http_api" || tool.category === "mcp" ? messages : loadToolMessages({ messages: controlMessages })
+        );
+        if (messageError) { setError(messageError); return; }
 
         try {
             setIsSaving(true);
@@ -364,16 +640,70 @@ export default function ToolDetailPage() {
                     definition: {
                         schema_version: 1,
                         type: "end_call",
+                        messages: controlMessages,
                         config: {
-                            messageType: endCallMessageType,
-                            customMessage: endCallMessageType === "custom" ? customMessage : undefined,
-                            audioRecordingId: endCallMessageType === "audio" ? audioRecordingId || undefined : undefined,
                             endCallReason,
                             endCallReasonDescription: endCallReason ? endCallReasonDescription || undefined : undefined,
                         },
                     },
                 };
             } else if (tool.category === "transfer_call") {
+                const resolverHeadersObject: Record<string, string> = {};
+                transferResolverHeaders.filter((h) => h.key && h.value).forEach((h) => {
+                    resolverHeadersObject[h.key] = h.value;
+                });
+
+                const validTransferParameters = transferParameters.filter((p) => p.name.trim());
+                const validTransferPresetParameters = transferPresetParameters.filter(
+                    (p) => p.name.trim() && p.valueTemplate.trim()
+                );
+
+                const transferConfig: TransferCallConfig = {
+                    destination_source: transferDestinationSource,
+                    destination: transferDestinationSource === "static" ? normalizedTransferDestination : "",
+                    timeout: transferTimeout,
+                    call_disposition: transferCallDisposition.trim() || undefined,
+                    introduction_enabled: transferIntroductionEnabled,
+                    introduction_prompt: transferIntroductionPrompt.trim() || DEFAULT_TRANSFER_INTRODUCTION_PROMPT,
+                    resolver: transferDestinationSource === "dynamic"
+                        ? {
+                            type: "http",
+                            url: transferResolverUrl.trim(),
+                            credential_uuid: transferResolverCredentialUuid || undefined,
+                            headers:
+                                Object.keys(resolverHeadersObject).length > 0
+                                    ? resolverHeadersObject
+                                    : undefined,
+                            timeout_ms: transferResolverTimeoutMs,
+                            wait_message: transferResolverWaitMessage.trim() || undefined,
+                            parameters:
+                                validTransferParameters.length > 0
+                                    ? validTransferParameters.map((p) => ({
+                                        name: p.name.trim(),
+                                        type: p.type,
+                                        description: p.description.trim(),
+                                        required: p.required,
+                                    }))
+                                    : undefined,
+                            preset_parameters:
+                                validTransferPresetParameters.length > 0
+                                    ? validTransferPresetParameters.map((p) => ({
+                                        name: p.name.trim(),
+                                        type: p.type,
+                                        value_template: p.valueTemplate.trim(),
+                                        required: p.required,
+                                    }))
+                                    : undefined,
+                        }
+                        : undefined,
+                    context_mapping: transferDestinationSource === "context_mapping"
+                        ? {
+                            rules: ruleRowsToContextMappingRules(transferContextDestinationRules),
+                            fallback_destination:
+                                transferFallbackDestination.trim() || undefined,
+                        }
+                        : undefined,
+                };
                 // Build transfer call request body
                 requestBody = {
                     name,
@@ -381,20 +711,27 @@ export default function ToolDetailPage() {
                     definition: {
                         schema_version: 1,
                         type: "transfer_call",
-                        config: {
-                            destination: transferDestination,
-                            messageType: transferMessageType,
-                            customMessage: transferMessageType === "custom" ? customMessage : undefined,
-                            audioRecordingId: transferMessageType === "audio" ? transferAudioRecordingId || undefined : undefined,
-                            timeout: transferTimeout,
-                        },
-                    },
+                        messages: controlMessages,
+                        config: transferConfig,
+                    } as UpdateToolRequest["definition"],
                 };
             } else if (tool.category === "mcp") {
                 requestBody = {
                     name,
                     description: description || undefined,
-                    definition: createMcpDefinition(mcpUrl, mcpCredentialUuid, mcpToolsFilter),
+                    definition: { ...createMcpDefinition(mcpUrl, mcpCredentialUuid, mcpToolsFilter), messages: serializeToolMessages(messages) },
+                };
+            } else if (tool.category === "transfer_agent") {
+                requestBody = {
+                    name,
+                    description: description || undefined,
+                    definition: createTransferAgentDefinition({
+                        workflow_id: Number(transferAgentWorkflowId),
+                        greeting_mode: transferAgentGreetingMode,
+                        ...(transferAgentGreetingMode === "introduce_and_continue"
+                            ? { introduction: transferAgentIntroduction.trim() }
+                            : {}),
+                    }, controlMessages),
                 };
             } else {
                 // Build HTTP API request body
@@ -414,6 +751,7 @@ export default function ToolDetailPage() {
                     definition: {
                         schema_version: 1,
                         type: "http_api",
+                        messages: serializeToolMessages(messages),
                         config: {
                             method: httpMethod,
                             url,
@@ -433,10 +771,11 @@ export default function ToolDetailPage() {
                                         required: p.required,
                                     }))
                                     : undefined,
+                            body_template: bodyTemplateSupported && bodyTemplateEnabled
+                                ? bodyTemplate || undefined
+                                : undefined,
+                            body_format: bodyFormat,
                             timeout_ms: timeoutMs,
-                            customMessage: customMessageType === 'text' ? (customMessage || undefined) : undefined,
-                            customMessageType,
-                            customMessageRecordingId: customMessageType === 'audio' ? (customMessageRecordingId || undefined) : undefined,
                         },
                     },
                 };
@@ -459,6 +798,25 @@ export default function ToolDetailPage() {
                 setTool(response.data);
                 setSaveSuccess(true);
                 setTimeout(() => setSaveSuccess(false), 3000);
+                if (tool.category === "http_api") {
+                    setSavedHttpTestSnapshot(
+                        buildHttpToolTestSnapshot({
+                            name,
+                            description,
+                            httpMethod,
+                            url,
+                            credentialUuid,
+                            headers,
+                            parameters,
+                            presetParameters,
+                            bodyTemplateEnabled,
+                            bodyTemplate,
+                            bodyFormat,
+                            timeoutMs,
+                            messages: serializeToolMessages(messages),
+                        })
+                    );
+                }
             }
         } catch (err) {
             setError("Failed to save tool");
@@ -471,10 +829,13 @@ export default function ToolDetailPage() {
     const getCodeSnippet = () => {
         if (!tool) return "";
 
+        const isFormBody = bodyTemplateSupported && bodyFormat === "form";
         const headersObj: Record<string, string> = {
-            "Content-Type": "application/json",
+            "Content-Type": isFormBody ? "application/x-www-form-urlencoded" : "application/json",
         };
         headers.filter((h) => h.key && h.value).forEach((h) => {
+            // Form mode owns the Content-Type at runtime; mirror that here.
+            if (isFormBody && h.key.toLowerCase() === "content-type") return;
             headersObj[h.key] = h.value;
         });
 
@@ -499,10 +860,12 @@ export default function ToolDetailPage() {
             }
         });
 
+        const requestBody = bodyTemplateEnabled && bodyTemplate ? bodyTemplate : exampleBody;
         const hasBody =
-            httpMethod !== "GET" &&
-            httpMethod !== "DELETE" &&
-            (parameters.length > 0 || presetParameters.length > 0);
+            bodyTemplateSupported &&
+            (bodyTemplateEnabled
+                ? bodyTemplate !== null
+                : parameters.length > 0 || presetParameters.length > 0);
 
         return `// ${tool.name}
 // ${tool.description || "HTTP API Tool"}
@@ -510,7 +873,7 @@ export default function ToolDetailPage() {
 const response = await fetch("${url}", {
     method: "${httpMethod}",
     headers: ${JSON.stringify(headersObj, null, 4)},${hasBody ? `
-    body: JSON.stringify(${JSON.stringify(exampleBody, null, 4)}),` : ""}
+    body: ${isFormBody ? "new URLSearchParams" : "JSON.stringify"}(${JSON.stringify(requestBody, null, 4)}),` : ""}
 });
 
 const data = await response.json();`;
@@ -518,7 +881,7 @@ const data = await response.json();`;
 
     if (loading || !user) {
         return (
-            <div className="min-h-screen bg-background flex items-center justify-center">
+            <div className="min-h-screen flex items-center justify-center">
                 <div className="space-y-4">
                     <Skeleton className="h-12 w-64" />
                     <Skeleton className="h-64 w-96" />
@@ -529,272 +892,369 @@ const data = await response.json();`;
 
     if (isLoading) {
         return (
-            <div className="min-h-screen bg-background">
-                <div className="container mx-auto px-4 py-8">
-                    <div className="max-w-4xl mx-auto space-y-6">
-                        <Skeleton className="h-8 w-48" />
-                        <Skeleton className="h-64 w-full" />
-                    </div>
-                </div>
-            </div>
+            <PageShell className="space-y-6">
+                <Skeleton className="h-8 w-48" />
+                <Skeleton className="h-64 w-full" />
+            </PageShell>
         );
     }
 
     if (!tool) {
         return (
-            <div className="min-h-screen bg-background">
-                <div className="container mx-auto px-4 py-8">
-                    <div className="max-w-4xl mx-auto text-center">
-                        <h1 className="text-2xl font-bold mb-4">Tool not found</h1>
-                        <Button onClick={() => router.push("/tools")}>
-                            <ArrowLeft className="w-4 h-4 mr-2" />
-                            Back to Tools
-                        </Button>
-                    </div>
-                </div>
-            </div>
+            <PageShell className="text-center">
+                <h1 className="text-2xl font-bold mb-4">Tool not found</h1>
+                <Button onClick={() => router.push("/tools")}>
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Back to Tools
+                </Button>
+            </PageShell>
         );
     }
 
     const isEndCallTool = tool.category === "end_call";
     const isTransferCallTool = tool.category === "transfer_call";
+    const isTransferAgentTool = tool.category === "transfer_agent";
     const isBuiltinTool = tool.category === "calculator";
     const isMcpTool = tool.category === "mcp";
+    const isHttpApiTool = tool.category === "http_api";
+    const hasUnsavedHttpChanges =
+        isHttpApiTool &&
+        (savedHttpTestSnapshot === null ||
+            buildHttpToolTestSnapshot({
+                name,
+                description,
+                httpMethod,
+                url,
+                credentialUuid,
+                headers,
+                parameters,
+                presetParameters,
+                bodyTemplateEnabled,
+                bodyTemplate,
+                bodyFormat,
+                timeoutMs,
+                messages: serializeToolMessages(messages),
+            }) !== savedHttpTestSnapshot);
     const categoryConfig = getCategoryConfig(tool.category as ToolCategory);
 
     return (
-        <div className="min-h-screen bg-background">
-            <div className="container mx-auto px-4 py-8">
-                <div className="max-w-4xl mx-auto">
-                    {/* Header */}
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-4">
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => router.push("/tools")}
+        <>
+            <PageShell>
+                {/* Header */}
+                <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-4">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => router.push("/tools")}
+                        >
+                            <ArrowLeft className="w-4 h-4 mr-2" />
+                            Back
+                        </Button>
+                        <div className="flex items-center gap-3">
+                            <div
+                                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                                style={{
+                                    backgroundColor: tool.icon_color || categoryConfig?.iconColor || "#3B82F6",
+                                }}
                             >
-                                <ArrowLeft className="w-4 h-4 mr-2" />
-                                Back
-                            </Button>
-                            <div className="flex items-center gap-3">
-                                <div
-                                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                                    style={{
-                                        backgroundColor: tool.icon_color || categoryConfig?.iconColor || "#3B82F6",
-                                    }}
-                                >
-                                    {renderToolIcon(tool.category)}
-                                </div>
-                                <div>
-                                    <h1 className="text-xl font-bold">{name}</h1>
-                                    <p className="text-sm text-muted-foreground">
-                                        {getToolTypeLabel(tool.category)}
-                                    </p>
-                                </div>
+                                {renderToolIcon(tool.category)}
+                            </div>
+                            <div>
+                                <h1 className="text-xl font-bold">{name}</h1>
+                                <p className="text-sm text-muted-foreground">
+                                    {getToolTypeLabel(tool.category)}
+                                </p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                            {!isEndCallTool && !isTransferCallTool && !isBuiltinTool && !isMcpTool && (
-                                <Button
-                                    variant="outline"
-                                    onClick={() => setShowCodeDialog(true)}
-                                >
-                                    <Code className="w-4 h-4 mr-2" />
-                                    View Code
-                                </Button>
-                            )}
-                            {TOOL_DOCUMENTATION_URLS[tool.category] && (
-                                <a
-                                    href={TOOL_DOCUMENTATION_URLS[tool.category]}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                                >
-                                    Docs
-                                    <ExternalLink className="h-3.5 w-3.5" />
-                                </a>
-                            )}
-                        </div>
                     </div>
-
-                    {isBuiltinTool ? (
-                        <BuiltinToolConfig
-                            name={name}
-                            onNameChange={setName}
-                            description={description}
-                            onDescriptionChange={setDescription}
-                            title="Calculator Configuration"
-                            subtitle="Built-in calculator for arithmetic operations. No additional configuration needed."
-                        />
-                    ) : isEndCallTool ? (
-                        <EndCallToolConfig
-                            name={name}
-                            onNameChange={setName}
-                            description={description}
-                            onDescriptionChange={setDescription}
-                            messageType={endCallMessageType}
-                            onMessageTypeChange={setEndCallMessageType}
-                            customMessage={customMessage}
-                            onCustomMessageChange={setCustomMessage}
-                            audioRecordingId={audioRecordingId}
-                            onAudioRecordingIdChange={setAudioRecordingId}
-                            recordings={recordings}
-                            endCallReason={endCallReason}
-                            onEndCallReasonChange={handleEndCallReasonChange}
-                            endCallReasonDescription={endCallReasonDescription}
-                            onEndCallReasonDescriptionChange={setEndCallReasonDescription}
-                        />
-                    ) : isTransferCallTool ? (
-                        <TransferCallToolConfig
-                            name={name}
-                            onNameChange={setName}
-                            description={description}
-                            onDescriptionChange={setDescription}
-                            destination={transferDestination}
-                            onDestinationChange={setTransferDestination}
-                            messageType={transferMessageType}
-                            onMessageTypeChange={setTransferMessageType}
-                            customMessage={customMessage}
-                            onCustomMessageChange={setCustomMessage}
-                            audioRecordingId={transferAudioRecordingId}
-                            onAudioRecordingIdChange={setTransferAudioRecordingId}
-                            recordings={recordings}
-                            timeout={transferTimeout}
-                            onTimeoutChange={setTransferTimeout}
-                        />
-                    ) : isMcpTool ? (
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>MCP Server Configuration</CardTitle>
-                                <CardDescription>
-                                    Configure the MCP server endpoint. Its tools become available to the agent.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-6">
-                                <div className="space-y-2">
-                                    <Label htmlFor="mcp-name">Tool Name</Label>
-                                    <Input
-                                        id="mcp-name"
-                                        value={name}
-                                        onChange={(e) => setName(e.target.value)}
-                                        placeholder="e.g., Customer MCP Server"
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="mcp-description">Description</Label>
-                                    <p className="text-xs text-muted-foreground">
-                                        Provide a description which makes it easy for LLM to understand what this tool does
-                                    </p>
-                                    <Textarea
-                                        id="mcp-description"
-                                        value={description}
-                                        onChange={(e) => setDescription(e.target.value)}
-                                        placeholder="What does this MCP server provide?"
-                                        rows={3}
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="mcp-url">MCP Server URL</Label>
-                                    <Input
-                                        id="mcp-url"
-                                        value={mcpUrl}
-                                        onChange={(e) => setMcpUrl(e.target.value)}
-                                        placeholder="https://your-mcp-server.example.com/mcp"
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label>Transport</Label>
-                                    <Input
-                                        value="Streamable HTTP"
-                                        disabled
-                                        readOnly
-                                    />
-                                </div>
-
-                                <CredentialSelector
-                                    value={mcpCredentialUuid}
-                                    onChange={setMcpCredentialUuid}
-                                    label="Credential (Optional)"
-                                    description="Select a credential for authenticating with the MCP server, or leave empty for no auth."
-                                />
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="mcp-tools-filter">Tools Filter (Optional)</Label>
-                                    <Input
-                                        id="mcp-tools-filter"
-                                        value={mcpToolsFilter}
-                                        onChange={(e) => setMcpToolsFilter(e.target.value)}
-                                        placeholder="e.g., tool_one, tool_two"
-                                    />
-                                    <p className="text-xs text-muted-foreground">
-                                        Comma-separated list of tool names to allow. Leave empty to expose all tools from the server.
-                                    </p>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    ) : (
-                        <HttpApiToolConfig
-                            name={name}
-                            onNameChange={setName}
-                            description={description}
-                            onDescriptionChange={setDescription}
-                            httpMethod={httpMethod}
-                            onHttpMethodChange={setHttpMethod}
-                            url={url}
-                            onUrlChange={setUrl}
-                            credentialUuid={credentialUuid}
-                            onCredentialUuidChange={setCredentialUuid}
-                            headers={headers}
-                            onHeadersChange={setHeaders}
-                            parameters={parameters}
-                            onParametersChange={setParameters}
-                            presetParameters={presetParameters}
-                            onPresetParametersChange={setPresetParameters}
-                            timeoutMs={timeoutMs}
-                            onTimeoutMsChange={setTimeoutMs}
-                            customMessage={customMessage}
-                            onCustomMessageChange={setCustomMessage}
-                            customMessageType={customMessageType}
-                            onCustomMessageTypeChange={setCustomMessageType}
-                            customMessageRecordingId={customMessageRecordingId}
-                            onCustomMessageRecordingIdChange={setCustomMessageRecordingId}
-                            recordings={recordings}
-                        />
-                    )}
-
-                    {error && (
-                        <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive">
-                            {error}
-                        </div>
-                    )}
-
-                    {saveSuccess && (
-                        <div className="mt-4 p-4 bg-green-500/10 border border-green-500/20 rounded-lg text-green-600">
-                            Tool saved successfully!
-                        </div>
-                    )}
-
-                    <div className="flex justify-end mt-6">
-                        <Button onClick={handleSave} disabled={isSaving}>
-                            {isSaving ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                    Saving...
-                                </>
-                            ) : (
-                                <>
-                                    <Save className="w-4 h-4 mr-2" />
-                                    Save
-                                </>
-                            )}
-                        </Button>
+                    <div className="flex items-center gap-2">
+                        {isHttpApiTool && (
+                            <Button
+                                variant="outline"
+                                onClick={() => setShowCodeDialog(true)}
+                            >
+                                <Code className="w-4 h-4 mr-2" />
+                                View Code
+                            </Button>
+                        )}
+                        {TOOL_DOCUMENTATION_URLS[tool.category] && (
+                            <a
+                                href={TOOL_DOCUMENTATION_URLS[tool.category]}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                                Docs
+                                <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                        )}
                     </div>
                 </div>
-            </div>
+
+                {isBuiltinTool ? (
+                    <BuiltinToolConfig
+                        name={name}
+                        onNameChange={setName}
+                        description={description}
+                        onDescriptionChange={setDescription}
+                        title="Calculator Configuration"
+                        subtitle="Built-in calculator for arithmetic operations. No additional configuration needed."
+                    />
+                ) : isEndCallTool ? (
+                    <EndCallToolConfig
+                        name={name}
+                        onNameChange={setName}
+                        description={description}
+                        onDescriptionChange={setDescription}
+                        messageType={endCallMessageType}
+                        onMessageTypeChange={setEndCallMessageType}
+                        customMessage={customMessage}
+                        onCustomMessageChange={setCustomMessage}
+                        audioRecordingId={audioRecordingId}
+                        onAudioRecordingIdChange={setAudioRecordingId}
+                        recordings={recordings}
+                        endCallReason={endCallReason}
+                        onEndCallReasonChange={handleEndCallReasonChange}
+                        endCallReasonDescription={endCallReasonDescription}
+                        onEndCallReasonDescriptionChange={setEndCallReasonDescription}
+                    />
+                ) : isTransferCallTool ? (
+                    <TransferCallToolConfig
+                        name={name}
+                        onNameChange={setName}
+                        description={description}
+                        onDescriptionChange={setDescription}
+                        destinationSource={transferDestinationSource}
+                        onDestinationSourceChange={handleTransferDestinationSourceChange}
+                        destination={transferDestination}
+                        onDestinationChange={setTransferDestination}
+                        messageType={transferMessageType}
+                        onMessageTypeChange={setTransferMessageType}
+                        customMessage={customMessage}
+                        onCustomMessageChange={setCustomMessage}
+                        audioRecordingId={transferAudioRecordingId}
+                        onAudioRecordingIdChange={setTransferAudioRecordingId}
+                        recordings={recordings}
+                        timeout={transferTimeout}
+                        onTimeoutChange={setTransferTimeout}
+                        callDisposition={transferCallDisposition}
+                        onCallDispositionChange={setTransferCallDisposition}
+                        introductionEnabled={transferIntroductionEnabled}
+                        onIntroductionEnabledChange={setTransferIntroductionEnabled}
+                        introductionPrompt={transferIntroductionPrompt}
+                        onIntroductionPromptChange={setTransferIntroductionPrompt}
+                        resolverUrl={transferResolverUrl}
+                        onResolverUrlChange={setTransferResolverUrl}
+                        resolverCredentialUuid={transferResolverCredentialUuid}
+                        onResolverCredentialUuidChange={setTransferResolverCredentialUuid}
+                        resolverHeaders={transferResolverHeaders}
+                        onResolverHeadersChange={setTransferResolverHeaders}
+                        resolverTimeoutMs={transferResolverTimeoutMs}
+                        onResolverTimeoutMsChange={setTransferResolverTimeoutMs}
+                        resolverWaitMessage={transferResolverWaitMessage}
+                        onResolverWaitMessageChange={setTransferResolverWaitMessage}
+                        parameters={transferParameters}
+                        onParametersChange={setTransferParameters}
+                        presetParameters={transferPresetParameters}
+                        onPresetParametersChange={setTransferPresetParameters}
+                        contextDestinationRules={transferContextDestinationRules}
+                        onContextDestinationRulesChange={setTransferContextDestinationRules}
+                        fallbackDestination={transferFallbackDestination}
+                        onFallbackDestinationChange={setTransferFallbackDestination}
+                    />
+                ) : isTransferAgentTool ? (
+                    <TransferAgentToolConfig
+                        name={name}
+                        onNameChange={setName}
+                        description={description}
+                        onDescriptionChange={setDescription}
+                        workflowId={transferAgentWorkflowId}
+                        onWorkflowIdChange={setTransferAgentWorkflowId}
+                        workflows={agentOptions}
+                        workflowsLoading={agentOptionsLoading}
+                        message={transferAgentMessage}
+                        onMessageChange={setTransferAgentMessage}
+                        greetingMode={transferAgentGreetingMode}
+                        onGreetingModeChange={setTransferAgentGreetingMode}
+                        introduction={transferAgentIntroduction}
+                        onIntroductionChange={setTransferAgentIntroduction}
+                    />
+                ) : isMcpTool ? (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>MCP Server Configuration</CardTitle>
+                            <CardDescription>
+                                Configure the MCP server endpoint. Its tools become available to the agent.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                            <div className="space-y-2">
+                                <Label htmlFor="mcp-name">Tool Name</Label>
+                                <Input
+                                    id="mcp-name"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="e.g., Customer MCP Server"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="mcp-description">Description</Label>
+                                <p className="text-xs text-muted-foreground">
+                                    Provide a description which makes it easy for LLM to understand what this tool does
+                                </p>
+                                <Textarea
+                                    id="mcp-description"
+                                    value={description}
+                                    onChange={(e) => setDescription(e.target.value)}
+                                    placeholder="What does this MCP server provide?"
+                                    rows={3}
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="mcp-url">MCP Server URL</Label>
+                                <Input
+                                    id="mcp-url"
+                                    value={mcpUrl}
+                                    onChange={(e) => setMcpUrl(e.target.value)}
+                                    placeholder="https://your-mcp-server.example.com/mcp"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>Transport</Label>
+                                <Input
+                                    value="Streamable HTTP"
+                                    disabled
+                                    readOnly
+                                />
+                            </div>
+
+                            <CredentialSelector
+                                value={mcpCredentialUuid}
+                                onChange={setMcpCredentialUuid}
+                                label="Credential (Optional)"
+                                description="Select a credential for authenticating with the MCP server, or leave empty for no auth."
+                            />
+
+                            <div className="space-y-2">
+                                <Label htmlFor="mcp-tools-filter">Tools Filter (Optional)</Label>
+                                <Input
+                                    id="mcp-tools-filter"
+                                    value={mcpToolsFilter}
+                                    onChange={(e) => setMcpToolsFilter(e.target.value)}
+                                    placeholder="e.g., tool_one, tool_two"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Comma-separated list of tool names to allow. Leave empty to expose all tools from the server.
+                                </p>
+                            </div>
+                        </CardContent>
+                    </Card>
+                ) : (
+                    <HttpApiToolConfig
+                        name={name}
+                        onNameChange={setName}
+                        description={description}
+                        onDescriptionChange={setDescription}
+                        httpMethod={httpMethod}
+                        onHttpMethodChange={setHttpMethod}
+                        url={url}
+                        onUrlChange={setUrl}
+                        credentialUuid={credentialUuid}
+                        onCredentialUuidChange={setCredentialUuid}
+                        headers={headers}
+                        onHeadersChange={setHeaders}
+                        parameters={parameters}
+                        onParametersChange={setParameters}
+                        presetParameters={presetParameters}
+                        onPresetParametersChange={setPresetParameters}
+                        bodyTemplateEnabled={bodyTemplateEnabled}
+                        onBodyTemplateEnabledChange={setBodyTemplateEnabled}
+                        bodyTemplate={bodyTemplate}
+                        onBodyTemplateChange={setBodyTemplate}
+                        onBodyTemplateValidityChange={setIsBodyTemplateValid}
+                        bodyFormat={bodyFormat}
+                        onBodyFormatChange={setBodyFormat}
+                        timeoutMs={timeoutMs}
+                        onTimeoutMsChange={setTimeoutMs}
+                    />
+                )}
+
+                {(isHttpApiTool || isMcpTool) && (
+                    <ToolMessagesEditor value={messages} onChange={setMessages} recordings={recordings}
+                        timeoutMs={isHttpApiTool ? timeoutMs : undefined} />
+                )}
+
+                {isHttpApiTool && (
+                    <HttpToolTestDialog
+                        open={showTestDialog}
+                        onOpenChange={setShowTestDialog}
+                        toolUuid={toolUuid}
+                        httpMethod={httpMethod}
+                        url={url}
+                        parameters={parameters}
+                        presetParameters={presetParameters}
+                    />
+                )}
+
+                {error && (
+                    <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive">
+                        {error}
+                    </div>
+                )}
+
+                {saveSuccess && (
+                    <div className="mt-4 p-4 bg-green-500/10 border border-green-500/20 rounded-lg text-green-600">
+                        Tool saved successfully!
+                    </div>
+                )}
+
+                <div className="flex justify-end gap-2 mt-6">
+                    {isHttpApiTool && (
+                        hasUnsavedHttpChanges ? (
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <span className="inline-flex" tabIndex={0}>
+                                        <Button type="button" variant="outline" disabled>
+                                            <FlaskConical className="w-4 h-4 mr-2" />
+                                            Test Tool
+                                        </Button>
+                                    </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                    Save the tool before testing.
+                                </TooltipContent>
+                            </Tooltip>
+                        ) : (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => setShowTestDialog(true)}
+                                disabled={isSaving}
+                            >
+                                <FlaskConical className="w-4 h-4 mr-2" />
+                                Test Tool
+                            </Button>
+                        )
+                    )}
+                    <Button onClick={handleSave} disabled={isSaving}>
+                        {isSaving ? (
+                            <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Saving...
+                            </>
+                        ) : (
+                            <>
+                                <Save className="w-4 h-4 mr-2" />
+                                Save
+                            </>
+                        )}
+                    </Button>
+                </div>
+            </PageShell>
 
             {/* Code View Dialog (only for HTTP API tools) */}
             <Dialog open={showCodeDialog} onOpenChange={setShowCodeDialog}>
@@ -810,6 +1270,7 @@ const data = await response.json();`;
                     </div>
                 </DialogContent>
             </Dialog>
-        </div>
+
+        </>
     );
 }

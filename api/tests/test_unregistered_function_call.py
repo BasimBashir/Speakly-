@@ -9,7 +9,7 @@ from pipecat.frames.frames import (
     LLMContextFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
-    UserTurnInferenceCompletedFrame,
+    LLMServiceMetadataFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -44,9 +44,9 @@ class TestUnregisteredFunctionCall:
             pipeline,
             frames_to_send=[LLMContextFrame(context)],
             expected_down_frames=[
+                LLMServiceMetadataFrame,
                 LLMFullResponseStartFrame,
                 FunctionCallsFromLLMInfoFrame,
-                UserTurnInferenceCompletedFrame,
                 FunctionCallsStartedFrame,
                 LLMFullResponseEndFrame,
                 FunctionCallInProgressFrame,

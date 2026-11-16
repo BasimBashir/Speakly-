@@ -44,3 +44,4 @@ next-env.d.ts
 
 # Transient logs from failed @hey-api/openapi-ts generate-client runs
 openapi-ts-error-*.log
+.env

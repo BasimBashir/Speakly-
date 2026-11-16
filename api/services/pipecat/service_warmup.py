@@ -68,7 +68,6 @@ async def _warmup_embeddings(organization_id: int, created_by_user_id: int | Non
         # Resolve through the v2-aware path (org v2 config -> legacy v1) so the
         # warmup uses the same embeddings config as the real KB retrieval call.
         resolved = await get_resolved_ai_model_configuration(
-            user_id=created_by_user_id,
             organization_id=organization_id,
         )
         embeddings = resolved.effective.embeddings

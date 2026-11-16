@@ -24,6 +24,9 @@ class PhoneNumberCreateRequest(BaseModel):
     country_code: Optional[str] = Field(default=None, min_length=2, max_length=2)
     label: Optional[str] = Field(default=None, max_length=64)
     inbound_workflow_id: Optional[int] = None
+    # The trunk this number dials out over. Only meaningful on providers that
+    # have trunks; must belong to the same configuration.
+    telephony_trunk_id: Optional[int] = None
     is_active: bool = True
     is_default_caller_id: bool = False
     extra_metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -70,6 +73,9 @@ class PhoneNumberUpdateRequest(BaseModel):
     # Set to true to clear inbound_workflow_id (FK is otherwise non-nullable
     # via the partial-update pattern).
     clear_inbound_workflow: bool = False
+    telephony_trunk_id: Optional[int] = None
+    # Set to true to detach the number from its trunk.
+    clear_trunk: bool = False
     is_active: Optional[bool] = None
     country_code: Optional[str] = Field(default=None, min_length=2, max_length=2)
     extra_metadata: Optional[Dict[str, Any]] = None
@@ -99,6 +105,7 @@ class PhoneNumberResponse(BaseModel):
     label: Optional[str] = None
     inbound_workflow_id: Optional[int] = None
     inbound_workflow_name: Optional[str] = None
+    telephony_trunk_id: Optional[int] = None
     is_active: bool
     is_default_caller_id: bool
     extra_metadata: Dict[str, Any]
@@ -111,3 +118,25 @@ class PhoneNumberResponse(BaseModel):
 
 class PhoneNumberListResponse(BaseModel):
     phone_numbers: list[PhoneNumberResponse]
+
+
+class PhoneNumberSyncSkipped(BaseModel):
+    """A provider number the sync could not import, and why."""
+
+    address: str
+    reason: str
+
+
+class PhoneNumberSyncResponse(BaseModel):
+    """Outcome of importing the provider account's numbers into a configuration.
+
+    Rows are only ever added or refreshed. A number the provider no longer
+    reports is listed under ``missing_at_provider`` for the operator to act
+    on; the sync never deactivates or deletes it, because a transient listing
+    gap must not silence a live number.
+    """
+
+    created: list[PhoneNumberResponse]
+    updated: list[PhoneNumberResponse]
+    skipped: list[PhoneNumberSyncSkipped]
+    missing_at_provider: list[PhoneNumberResponse]

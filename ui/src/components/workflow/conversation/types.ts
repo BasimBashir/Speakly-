@@ -1,4 +1,5 @@
 export type ConversationStatus = "ready" | "live" | "ended";
+export type ToolCallStatus = "running" | "completed" | "timeout" | "failed" | "cancelled";
 
 export type RealtimeFeedbackMessageType =
     | "user-transcription"
@@ -31,6 +32,8 @@ export interface RealtimeFeedbackMessage {
     fatal?: boolean;
 }
 
+export type TtfbKind = "stt" | "llm" | "tts";
+
 export interface RealtimeFeedbackEvent {
     type: string;
     payload: {
@@ -38,6 +41,7 @@ export interface RealtimeFeedbackEvent {
         final?: boolean;
         user_id?: string;
         timestamp?: string;
+        end_timestamp?: string;
         function_name?: string;
         tool_call_id?: string;
         arguments?: unknown;
@@ -49,6 +53,7 @@ export interface RealtimeFeedbackEvent {
         previous_node_name?: string;
         allow_interrupt?: boolean;
         ttfb_seconds?: number;
+        kind?: TtfbKind;
         processor?: string;
         model?: string;
         error?: string;
@@ -81,7 +86,7 @@ export interface ConversationToolCallItem extends ConversationItemBase {
     kind: "tool-call";
     functionName: string;
     toolCallId?: string;
-    status: "running" | "completed";
+    status: ToolCallStatus;
     arguments?: unknown;
     result?: unknown;
 }

@@ -109,6 +109,14 @@ class OpenAIEmbeddingService(BaseEmbeddingService):
         if not self._api_key_configured or self.client is None:
             raise EmbeddingAPIKeyNotConfiguredError()
 
+    def _request_kwargs(self) -> Dict[str, Any]:
+        """Extra kwargs merged into every embeddings.create() call.
+
+        Override hook for subclasses (e.g. DograhEmbeddingService injects the MPS
+        billing protocol here). The base service adds nothing.
+        """
+        return {}
+
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """Embed a batch of texts using the configured embeddings endpoint.
 
@@ -129,7 +137,11 @@ class OpenAIEmbeddingService(BaseEmbeddingService):
         all_embeddings: List[List[float]] = []
         for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
             batch = texts[i : i + EMBEDDING_BATCH_SIZE]
-            kwargs: Dict[str, Any] = {"input": batch, "model": self.model_id}
+            kwargs: Dict[str, Any] = {
+                "input": batch,
+                "model": self.model_id,
+                **self._request_kwargs(),
+            }
             if self.model_id in MATRYOSHKA_OPENAI_MODELS:
                 kwargs["dimensions"] = EMBEDDING_DIMENSION
 

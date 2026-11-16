@@ -2,6 +2,8 @@ import { Suspense } from 'react';
 
 import { getWorkflowsApiV1WorkflowFetchGet, listFoldersApiV1FolderGet } from '@/client/sdk.gen';
 import type { FolderResponse, WorkflowListResponse } from '@/client/types.gen';
+import { PageShell } from '@/components/layout/PageShell';
+import { Card, CardContent } from '@/components/ui/card';
 import { CreateWorkflowButton } from "@/components/workflow/CreateWorkflowButton";
 import { AgentFolderView } from '@/components/workflow/folders/AgentFolderView';
 import { CreateFolderButton } from '@/components/workflow/folders/CreateFolderButton';
@@ -10,7 +12,6 @@ import { UploadWorkflowButton } from '@/components/workflow/UploadWorkflowButton
 import { getServerAccessToken, getServerAuthProvider } from '@/lib/auth/server';
 import logger from '@/lib/logger';
 
-import WorkflowLayout from "./WorkflowLayout";
 
 export const dynamic = 'force-dynamic';
 
@@ -78,9 +79,11 @@ async function WorkflowList() {
                     {activeWorkflows.length > 0 || folders.length > 0 ? (
                         <AgentFolderView workflows={activeWorkflows} folders={folders} />
                     ) : (
-                        <div className="text-muted-foreground bg-muted rounded-lg p-8 text-center">
-                            No active workflows found. Create your first workflow to get started.
-                        </div>
+                        <Card>
+                            <CardContent className="p-8 text-center text-muted-foreground">
+                                No active workflows found. Create your first workflow to get started.
+                            </CardContent>
+                        </Card>
                     )}
                 </div>
 
@@ -107,7 +110,7 @@ async function PageContent() {
     const workflowList = await WorkflowList();
 
     return (
-        <div className="container mx-auto px-4 py-8">
+        <PageShell>
             {/* Your Workflows Section */}
             <div className="mb-6">
                 <div className="flex justify-between items-center mb-6">
@@ -120,19 +123,23 @@ async function PageContent() {
                 </div>
                 {workflowList}
             </div>
-        </div>
+        </PageShell>
     );
 }
 
 function WorkflowsLoading() {
     return (
-        <div className="container mx-auto px-4 py-8">
+        <PageShell>
             {/* Get Started Section Loading */}
             <div className="mb-12">
                 <div className="h-8 w-48 bg-muted rounded mb-6"></div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {Array.from({ length: 3 }, (_, i) => (
-                        <div key={i} className="bg-muted rounded-lg h-40"></div>
+                        <Card key={i}>
+                            <CardContent className="p-0">
+                                <div className="h-40 bg-muted/70" />
+                            </CardContent>
+                        </Card>
                     ))}
                 </div>
             </div>
@@ -143,19 +150,20 @@ function WorkflowsLoading() {
                     <div className="h-8 w-48 bg-muted rounded"></div>
                     <div className="h-10 w-32 bg-muted rounded"></div>
                 </div>
-                <div className="bg-muted rounded-lg h-96"></div>
+                <Card>
+                    <CardContent className="p-0">
+                        <div className="h-96 bg-muted/70" />
+                    </CardContent>
+                </Card>
             </div>
-        </div>
+        </PageShell>
     );
 }
 
 export default function WorkflowPage() {
     return (
-        <WorkflowLayout showFeaturesNav={true}>
-            <Suspense fallback={<WorkflowsLoading />}>
-                <PageContent />
-            </Suspense>
-        </WorkflowLayout>
-
+        <Suspense fallback={<WorkflowsLoading />}>
+            <PageContent />
+        </Suspense>
     );
 }

@@ -9,11 +9,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from loguru import logger
 
 from api.db import db_client
+from api.db.models import KnowledgeBaseDocumentModel
 from api.enums import PostHogEvent
 from api.schemas.knowledge_base import (
     ChunkSearchRequestSchema,
     ChunkSearchResponseSchema,
     DescribePreviewResponseSchema,
+    DocumentContentResponseSchema,
+    DocumentContentUpdateRequestSchema,
     DocumentListResponseSchema,
     DocumentResponseSchema,
     DocumentUploadRequestSchema,
@@ -27,12 +30,61 @@ from api.services.knowledge_base.describe_preview import (
     DescribePreviewError,
     generate_description_preview,
 )
-from api.services.posthog_client import capture_event
+from api.services.knowledge_base_content import (
+    DocumentContentConflictError,
+    DocumentContentTooLargeError,
+    DocumentNotEditableError,
+    enqueue_document_processing,
+    read_document_content,
+    update_document_content,
+)
+from api.services.posthog_tenant import capture_tenant_event
 from api.services.storage import storage_fs
 from api.tasks.arq import enqueue_job
 from api.tasks.function_names import FunctionNames
 
 router = APIRouter(prefix="/knowledge-base", tags=["knowledge-base"])
+
+
+def _has_live_content(document: KnowledgeBaseDocumentModel) -> bool:
+    # Processing only replaces full_text / chunks on success, so these reflect
+    # the version agents retrieve even while a re-index is running or failed.
+    if document.retrieval_mode == "full_document":
+        # Retrieval skips empty text, so an empty document serves nothing.
+        return bool(document.full_text)
+    return document.total_chunks > 0
+
+
+def _to_document_response(
+    document: KnowledgeBaseDocumentModel,
+) -> DocumentResponseSchema:
+    return DocumentResponseSchema(
+        id=document.id,
+        document_uuid=document.document_uuid,
+        filename=document.filename,
+        file_size_bytes=document.file_size_bytes,
+        file_hash=document.file_hash,
+        mime_type=document.mime_type,
+        processing_status=document.processing_status,
+        processing_error=document.processing_error,
+        total_chunks=document.total_chunks,
+        retrieval_mode=document.retrieval_mode,
+        custom_metadata=document.custom_metadata,
+        docling_metadata=document.docling_metadata,
+        source_url=document.source_url,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
+        organization_id=document.organization_id,
+        created_by=document.created_by,
+        is_active=document.is_active,
+        has_live_content=_has_live_content(document),
+        doc_type=document.doc_type,
+        intended_use=document.intended_use or [],
+        user_description=document.user_description,
+        doc_card=document.doc_card,
+        doc_card_extracted_at=document.doc_card_extracted_at,
+        topics=document.topics or [],
+    )
 
 
 @router.post(
@@ -142,14 +194,12 @@ async def process_document(
         )
 
         # Enqueue background task for processing
-        await enqueue_job(
-            FunctionNames.PROCESS_KNOWLEDGE_BASE_DOCUMENT,
-            document.id,
-            request.s3_key,
-            user.selected_organization_id,
-            str(user.provider_id),
-            128,  # max_tokens (default)
-            request.retrieval_mode,
+        await enqueue_document_processing(
+            document_id=document.id,
+            s3_key=request.s3_key,
+            organization_id=user.selected_organization_id,
+            created_by_provider_id=str(user.provider_id),
+            retrieval_mode=request.retrieval_mode,
         )
 
         logger.info(
@@ -157,15 +207,14 @@ async def process_document(
             f"with OpenAI embeddings, org {user.selected_organization_id}"
         )
 
-        capture_event(
+        await capture_tenant_event(
             distinct_id=str(user.provider_id),
             event=PostHogEvent.KNOWLEDGE_BASE_CREATED,
+            organization_id=user.selected_organization_id,
             properties={
-                "document_id": document.id,
                 "document_uuid": str(request.document_uuid),
                 "filename": filename,
                 "retrieval_mode": request.retrieval_mode,
-                "organization_id": user.selected_organization_id,
             },
         )
 
@@ -237,36 +286,7 @@ async def list_documents(
             offset=offset,
         )
 
-        # Convert to response schema
-        document_list = [
-            DocumentResponseSchema(
-                id=doc.id,
-                document_uuid=doc.document_uuid,
-                filename=doc.filename,
-                file_size_bytes=doc.file_size_bytes,
-                file_hash=doc.file_hash,
-                mime_type=doc.mime_type,
-                processing_status=doc.processing_status,
-                processing_error=doc.processing_error,
-                total_chunks=doc.total_chunks,
-                retrieval_mode=doc.retrieval_mode,
-                custom_metadata=doc.custom_metadata,
-                docling_metadata=doc.docling_metadata,
-                source_url=doc.source_url,
-                created_at=doc.created_at,
-                updated_at=doc.updated_at,
-                organization_id=doc.organization_id,
-                created_by=doc.created_by,
-                is_active=doc.is_active,
-                doc_type=doc.doc_type,
-                intended_use=doc.intended_use or [],
-                user_description=doc.user_description,
-                doc_card=doc.doc_card,
-                doc_card_extracted_at=doc.doc_card_extracted_at,
-                topics=doc.topics or [],
-            )
-            for doc in documents
-        ]
+        document_list = [_to_document_response(doc) for doc in documents]
 
         return DocumentListResponseSchema(
             documents=document_list,
@@ -304,38 +324,117 @@ async def get_document(
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        return DocumentResponseSchema(
-            id=document.id,
-            document_uuid=document.document_uuid,
-            filename=document.filename,
-            file_size_bytes=document.file_size_bytes,
-            file_hash=document.file_hash,
-            mime_type=document.mime_type,
-            processing_status=document.processing_status,
-            processing_error=document.processing_error,
-            total_chunks=document.total_chunks,
-            retrieval_mode=document.retrieval_mode,
-            custom_metadata=document.custom_metadata,
-            docling_metadata=document.docling_metadata,
-            source_url=document.source_url,
-            created_at=document.created_at,
-            updated_at=document.updated_at,
-            organization_id=document.organization_id,
-            created_by=document.created_by,
-            is_active=document.is_active,
-            doc_type=document.doc_type,
-            intended_use=document.intended_use or [],
-            user_description=document.user_description,
-            doc_card=document.doc_card,
-            doc_card_extracted_at=document.doc_card_extracted_at,
-            topics=document.topics or [],
-        )
+        return _to_document_response(document)
 
     except HTTPException:
         raise
     except Exception as exc:
         logger.error(f"Error getting document: {exc}")
         raise HTTPException(status_code=500, detail="Failed to get document") from exc
+
+
+@router.get(
+    "/documents/{document_uuid}/content",
+    response_model=DocumentContentResponseSchema,
+    summary="Get editable document content",
+)
+async def get_document_content(
+    document_uuid: str,
+    user=Depends(get_user),
+):
+    """Return the raw text of a .txt or .md document for editing.
+
+    Access Control:
+    * Users can only read documents from their organization.
+    """
+
+    document = await db_client.get_document_by_uuid(
+        document_uuid=document_uuid,
+        organization_id=user.selected_organization_id,
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        content = await read_document_content(document)
+    except DocumentNotEditableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error reading content of document {document_uuid}: {exc}")
+        raise HTTPException(
+            status_code=500, detail="Failed to load document content"
+        ) from exc
+
+    return DocumentContentResponseSchema(
+        document_uuid=document.document_uuid,
+        filename=document.filename,
+        retrieval_mode=document.retrieval_mode,
+        content=content,
+        file_hash=document.file_hash,
+    )
+
+
+@router.put(
+    "/documents/{document_uuid}/content",
+    response_model=DocumentResponseSchema,
+    summary="Replace document content and re-index",
+)
+async def save_document_content(
+    document_uuid: str,
+    request: DocumentContentUpdateRequestSchema,
+    user=Depends(get_user),
+):
+    """Replace the text of a .txt or .md document and re-process it.
+
+    The stored file is overwritten and the document is re-indexed in the
+    background. Agents keep using the previous version until that succeeds.
+
+    Access Control:
+    * Users can only edit documents from their organization.
+    """
+
+    document = await db_client.get_document_by_uuid(
+        document_uuid=document_uuid,
+        organization_id=user.selected_organization_id,
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        updated = await update_document_content(
+            document,
+            content=request.content,
+            expected_file_hash=request.expected_file_hash,
+            created_by_provider_id=str(user.provider_id),
+        )
+    except DocumentNotEditableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DocumentContentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DocumentContentTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error updating content of document {document_uuid}: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to save document") from exc
+
+    logger.info(
+        f"Updated content of document {document_uuid} "
+        f"(status={updated.processing_status}), user {user.id}, "
+        f"org {user.selected_organization_id}"
+    )
+
+    await capture_tenant_event(
+        distinct_id=str(user.provider_id),
+        event=PostHogEvent.KNOWLEDGE_BASE_UPDATED,
+        organization_id=user.selected_organization_id,
+        properties={
+            "document_uuid": updated.document_uuid,
+            "retrieval_mode": updated.retrieval_mode,
+            "reprocessing": updated.processing_status == "pending",
+        },
+    )
+
+    return _to_document_response(updated)
 
 
 @router.delete(
@@ -410,32 +509,7 @@ async def edit_document_inputs(
         user.selected_organization_id,
     )
 
-    return DocumentResponseSchema(
-        id=document.id,
-        document_uuid=document.document_uuid,
-        filename=document.filename,
-        file_size_bytes=document.file_size_bytes,
-        file_hash=document.file_hash,
-        mime_type=document.mime_type,
-        processing_status=document.processing_status,
-        processing_error=document.processing_error,
-        total_chunks=document.total_chunks,
-        retrieval_mode=document.retrieval_mode,
-        custom_metadata=document.custom_metadata,
-        docling_metadata=document.docling_metadata,
-        source_url=document.source_url,
-        created_at=document.created_at,
-        updated_at=document.updated_at,
-        organization_id=document.organization_id,
-        created_by=document.created_by,
-        is_active=document.is_active,
-        doc_type=document.doc_type,
-        intended_use=document.intended_use or [],
-        user_description=document.user_description,
-        doc_card=document.doc_card,
-        doc_card_extracted_at=document.doc_card_extracted_at,
-        topics=document.topics or [],
-    )
+    return _to_document_response(document)
 
 
 @router.post(
@@ -467,14 +541,12 @@ async def re_extract_doc_card(
             detail="Cannot re-extract: document has no user_description. PATCH the document first.",
         )
 
-    await enqueue_job(
-        FunctionNames.PROCESS_KNOWLEDGE_BASE_DOCUMENT,
-        document.id,
-        document.custom_metadata.get("s3_key", ""),
-        user.selected_organization_id,
-        str(user.provider_id),
-        128,
-        document.retrieval_mode,
+    await enqueue_document_processing(
+        document_id=document.id,
+        s3_key=(document.custom_metadata or {}).get("s3_key", ""),
+        organization_id=user.selected_organization_id,
+        created_by_provider_id=str(user.provider_id),
+        retrieval_mode=document.retrieval_mode,
     )
     return {"status": "enqueued", "document_uuid": document_uuid}
 
@@ -504,15 +576,10 @@ async def search_chunks(
             apply_managed_embeddings_base_url,
             get_resolved_ai_model_configuration,
         )
-        from api.services.configuration.registry import ServiceProviders
-        from api.services.gen_ai import (
-            AzureOpenAIEmbeddingService,
-            OpenAIEmbeddingService,
-        )
+        from api.services.gen_ai import build_embedding_service
 
-        # Try to get user's embeddings configuration
+        # Try to get the organization's embeddings configuration
         resolved_config = await get_resolved_ai_model_configuration(
-            user_id=user.id,
             organization_id=user.selected_organization_id,
         )
         effective_config = resolved_config.effective
@@ -536,22 +603,18 @@ async def search_chunks(
                 effective_config.embeddings, "api_version", None
             )
 
-        # Initialize embedding service based on provider
-        if embeddings_provider == ServiceProviders.AZURE.value and embeddings_endpoint:
-            embedding_service = AzureOpenAIEmbeddingService(
-                db_client=db_client,
-                api_key=embeddings_api_key,
-                endpoint=embeddings_endpoint,
-                model_id=embeddings_model or "text-embedding-3-small",
-                api_version=embeddings_api_version or "2024-02-15-preview",
-            )
-        else:
-            embedding_service = OpenAIEmbeddingService(
-                db_client=db_client,
-                api_key=embeddings_api_key,
-                model_id=embeddings_model or "text-embedding-3-small",
-                base_url=embeddings_base_url,
-            )
+        # Manual search runs outside any workflow run, so resolve the MPS
+        # correlation id here.
+        embedding_service = await build_embedding_service(
+            db_client=db_client,
+            provider=embeddings_provider,
+            api_key=embeddings_api_key,
+            model=embeddings_model,
+            base_url=embeddings_base_url,
+            endpoint=embeddings_endpoint,
+            api_version=embeddings_api_version,
+            resolve_correlation=True,
+        )
 
         # Perform search
         results = await embedding_service.search_similar_chunks(
@@ -595,7 +658,7 @@ async def search_chunks(
 
 
 DESCRIBE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024
-DESCRIBE_PREVIEW_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".json"}
+DESCRIBE_PREVIEW_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".json", ".md"}
 
 
 @router.post(

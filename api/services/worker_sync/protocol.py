@@ -16,6 +16,7 @@ class WorkerSyncEventType(str, Enum):
 
     LANGFUSE_CREDENTIALS = "langfuse_credentials"
     KB_INDEX_UPDATED = "kb_index_updated"
+    RECORDINGS = "recordings"
 
 
 @dataclass

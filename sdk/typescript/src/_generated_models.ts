@@ -272,6 +272,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AmbientNoiseConfigurationDefaults */
+        AmbientNoiseConfigurationDefaults: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Volume
+             * @default 0.3
+             */
+            volume: number;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * CalculatorToolDefinition
          * @description Tool definition for Calculator tools.
@@ -283,6 +298,11 @@ export interface components {
              * @default 1
              */
             schema_version: number;
+            /**
+             * Messages
+             * @description Configured speech. An empty list disables announcements. HTTP/MCP choose one start entry and one entry per delayed timing at random. End-call and transfer tools support one start entry only.
+             */
+            messages?: (components["schemas"]["ToolStartTextMessage"] | components["schemas"]["ToolStartAudioMessage"] | components["schemas"]["ToolDelayedTextMessage"] | components["schemas"]["ToolDelayedAudioMessage"])[];
             /**
              * @description Tool type. (enum property replaced by openapi-typescript)
              * @enum {string}
@@ -296,6 +316,81 @@ export interface components {
              * @default []
              */
             disposition_codes: string[];
+        };
+        /**
+         * CallDispositionOption
+         * @description One business outcome the terminal classifier may select.
+         */
+        CallDispositionOption: {
+            /**
+             * Code
+             * @description Stable code recorded when this outcome is selected.
+             */
+            code: string;
+            /**
+             * Description
+             * @description Business criteria for selecting this disposition.
+             */
+            description: string;
+        };
+        /**
+         * ContextDestinationMappingConfig
+         * @description Resolve a transfer destination from gathered or initial context.
+         *
+         *     Rules are evaluated in order. The first rule whose context value matches
+         *     one of its routes wins; ``fallback_destination`` applies only when no rule
+         *     matched. Destinations may be provider-native values or context templates.
+         */
+        ContextDestinationMappingConfig: {
+            /**
+             * Rules
+             * @description Ordered routing rules evaluated top to bottom; first match wins.
+             */
+            rules?: components["schemas"]["ContextDestinationRule"][] | null;
+            /**
+             * Context Path
+             * @description Deprecated single-rule context path. Use rules instead; accepted for backward compatibility.
+             */
+            context_path?: string | null;
+            /**
+             * Routes
+             * @description Deprecated single-rule routes. Use rules instead; accepted for backward compatibility.
+             */
+            routes?: components["schemas"]["ContextDestinationRoute"][] | null;
+            /**
+             * Fallback Destination
+             * @description Optional provider-native destination or context template used when no rule matched.
+             */
+            fallback_destination?: string | null;
+        };
+        /**
+         * ContextDestinationRoute
+         * @description Map one context value to a transfer destination.
+         */
+        ContextDestinationRoute: {
+            /**
+             * Context Value
+             * @description Context value that selects this destination.
+             */
+            context_value: string;
+            /**
+             * Destination
+             * @description VICIdial in-group, SIP endpoint, E.164 phone number, or context template used when this route matches.
+             */
+            destination: string;
+        };
+        /**
+         * ContextDestinationRule
+         * @description One context lookup with its value-to-destination routes.
+         */
+        ContextDestinationRule: {
+            /**
+             * Context Path
+             * @description Context path used for routing. An unprefixed path checks gathered context first, then initial context; use initial_context.* or gathered_context.* to select one explicitly.
+             */
+            context_path: string;
+            /** Routes */
+            routes: components["schemas"]["ContextDestinationRoute"][];
         };
         /**
          * CreateToolRequest
@@ -318,7 +413,7 @@ export interface components {
              * @default http_api
              * @enum {string}
              */
-            category: "http_api" | "end_call" | "transfer_call" | "calculator" | "native" | "integration" | "mcp";
+            category: "http_api" | "end_call" | "transfer_call" | "transfer_agent" | "calculator" | "native" | "integration" | "mcp";
             /**
              * Icon
              * @description Lucide icon identifier.
@@ -335,7 +430,7 @@ export interface components {
              * Definition
              * @description Typed tool definition.
              */
-            definition: components["schemas"]["HttpApiToolDefinition"] | components["schemas"]["EndCallToolDefinition"] | components["schemas"]["TransferCallToolDefinition"] | components["schemas"]["CalculatorToolDefinition"] | components["schemas"]["McpToolDefinition"];
+            definition: components["schemas"]["HttpApiToolDefinition"] | components["schemas"]["EndCallToolDefinition"] | components["schemas"]["TransferCallToolDefinition"] | components["schemas"]["TransferAgentToolDefinition"] | components["schemas"]["CalculatorToolDefinition"] | components["schemas"]["McpToolDefinition"];
         };
         /** CreateWorkflowRequest */
         CreateWorkflowRequest: {
@@ -469,29 +564,18 @@ export interface components {
             created_by: number;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Has Live Content
+             * @description Whether agents can currently retrieve this document's content. Stays true while an edited document is re-indexed or after its re-index fails, because the previous version keeps serving until a new one succeeds.
+             * @default false
+             */
+            has_live_content: boolean;
         };
         /**
          * EndCallConfig
          * @description Configuration for End Call tools.
          */
         EndCallConfig: {
-            /**
-             * Messagetype
-             * @description Type of goodbye message.
-             * @default none
-             * @enum {string}
-             */
-            messageType: "none" | "custom" | "audio";
-            /**
-             * Custommessage
-             * @description Custom message to play before ending the call.
-             */
-            customMessage?: string | null;
-            /**
-             * Audiorecordingid
-             * @description Recording ID for audio goodbye message.
-             */
-            audioRecordingId?: string | null;
             /**
              * Endcallreason
              * @description When enabled, the model must provide a reason for ending the call. The reason is set as call disposition and added to call tags.
@@ -516,12 +600,52 @@ export interface components {
              */
             schema_version: number;
             /**
+             * Messages
+             * @description Configured speech. An empty list disables announcements. HTTP/MCP choose one start entry and one entry per delayed timing at random. End-call and transfer tools support one start entry only.
+             */
+            messages?: (components["schemas"]["ToolStartTextMessage"] | components["schemas"]["ToolStartAudioMessage"] | components["schemas"]["ToolDelayedTextMessage"] | components["schemas"]["ToolDelayedAudioMessage"])[];
+            /**
              * @description Tool type. (enum property replaced by openapi-typescript)
              * @enum {string}
              */
             type: "end_call";
             /** @description End Call configuration. */
             config: components["schemas"]["EndCallConfig"];
+        };
+        /** ErrorCondition */
+        ErrorCondition: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+        };
+        /**
+         * ExternalPBXFieldMapping
+         * @description Map one gathered-context value to a provider-native field.
+         */
+        ExternalPBXFieldMapping: {
+            /** Context Path */
+            context_path: string;
+            /** Destination Field */
+            destination_field: string;
+        };
+        /** FallbackPolicy[ServiceSelection] */
+        FallbackPolicy_ServiceSelection_: {
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
+            /** Rules */
+            rules?: components["schemas"]["FallbackRule_ServiceSelection_"][];
+        };
+        /** FallbackRule[ServiceSelection] */
+        FallbackRule_ServiceSelection_: {
+            /** Condition */
+            condition: components["schemas"]["NoOutputCondition"] | components["schemas"]["ErrorCondition"];
+            target: components["schemas"]["ServiceSelection"];
         };
         /**
          * GraphConstraints
@@ -536,6 +660,10 @@ export interface components {
             min_outgoing?: number | null;
             /** Max Outgoing */
             max_outgoing?: number | null;
+            /** Min Instances */
+            min_instances?: number | null;
+            /** Max Instances */
+            max_instances?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -587,20 +715,19 @@ export interface components {
              */
             timeout_ms: number | null;
             /**
-             * Custommessage
-             * @description Custom message to play after tool execution.
+             * Body Template
+             * @description Optional JSON body template for POST, PUT, and PATCH requests.
              */
-            customMessage?: string | null;
+            body_template?: {
+                [key: string]: unknown;
+            } | null;
             /**
-             * Custommessagetype
-             * @description Type of custom message.
+             * Body Format
+             * @description Encoding of the POST, PUT, and PATCH request body: 'json' sends application/json, 'form' sends application/x-www-form-urlencoded.
+             * @default json
+             * @enum {string}
              */
-            customMessageType?: ("text" | "audio") | null;
-            /**
-             * Custommessagerecordingid
-             * @description Recording ID for an audio custom message.
-             */
-            customMessageRecordingId?: string | null;
+            body_format: "json" | "form";
         };
         /**
          * HttpApiToolDefinition
@@ -614,12 +741,68 @@ export interface components {
              */
             schema_version: number;
             /**
+             * Messages
+             * @description Configured speech. An empty list disables announcements. HTTP/MCP choose one start entry and one entry per delayed timing at random. End-call and transfer tools support one start entry only.
+             */
+            messages?: (components["schemas"]["ToolStartTextMessage"] | components["schemas"]["ToolStartAudioMessage"] | components["schemas"]["ToolDelayedTextMessage"] | components["schemas"]["ToolDelayedAudioMessage"])[];
+            /**
              * @description Tool type. (enum property replaced by openapi-typescript)
              * @enum {string}
              */
             type: "http_api";
             /** @description HTTP API configuration. */
             config: components["schemas"]["HttpApiConfig"];
+        };
+        /**
+         * HttpTransferResolverConfig
+         * @description HTTP endpoint used to resolve transfer destination at call time.
+         */
+        HttpTransferResolverConfig: {
+            /**
+             * Type
+             * @description Resolver type.
+             * @default http
+             * @constant
+             */
+            type: "http";
+            /**
+             * Url
+             * @description HTTP or HTTPS endpoint for transfer resolution.
+             */
+            url: string;
+            /**
+             * Headers
+             * @description Static headers to include with every resolver request.
+             */
+            headers?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Credential Uuid
+             * @description Reference to an external credential for resolver authentication.
+             */
+            credential_uuid?: string | null;
+            /**
+             * Timeout Ms
+             * @description Resolver request timeout in milliseconds.
+             * @default 3000
+             */
+            timeout_ms: number;
+            /**
+             * Wait Message
+             * @description Optional short message played while Dograh resolves routing.
+             */
+            wait_message?: string | null;
+            /**
+             * Parameters
+             * @description Parameters the model may provide when calling this transfer tool.
+             */
+            parameters?: components["schemas"]["ToolParameter"][] | null;
+            /**
+             * Preset Parameters
+             * @description Parameters injected by Dograh from fixed values or workflow context templates.
+             */
+            preset_parameters?: components["schemas"]["PresetToolParameter"][] | null;
         };
         /** InitiateCallRequest */
         InitiateCallRequest: {
@@ -693,12 +876,43 @@ export interface components {
              */
             schema_version: number;
             /**
+             * Messages
+             * @description Configured speech. An empty list disables announcements. HTTP/MCP choose one start entry and one entry per delayed timing at random. End-call and transfer tools support one start entry only.
+             */
+            messages?: (components["schemas"]["ToolStartTextMessage"] | components["schemas"]["ToolStartAudioMessage"] | components["schemas"]["ToolDelayedTextMessage"] | components["schemas"]["ToolDelayedAudioMessage"])[];
+            /**
              * @description Tool type. (enum property replaced by openapi-typescript)
              * @enum {string}
              */
             type: "mcp";
             /** @description MCP server configuration. */
             config: components["schemas"]["McpToolConfig"];
+        };
+        /** ModelConfigurationOverride */
+        ModelConfigurationOverride: {
+            /** Model Configuration Uuid */
+            model_configuration_uuid?: string | null;
+            /** Mode */
+            mode?: ("pipeline" | "realtime") | null;
+            llm?: components["schemas"]["ServiceOverride"] | null;
+            llm_fallback?: components["schemas"]["FallbackPolicy_ServiceSelection_"] | null;
+            stt?: components["schemas"]["ServiceOverride"] | null;
+            tts?: components["schemas"]["ServiceOverride"] | null;
+            realtime?: components["schemas"]["ServiceOverride"] | null;
+            embeddings?: components["schemas"]["ServiceOverride"] | null;
+        };
+        /** NoOutputCondition */
+        NoOutputCondition: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "no_output";
+            /**
+             * After Ms
+             * @default 1500
+             */
+            after_ms: number;
         };
         /**
          * NodeCategory
@@ -739,6 +953,11 @@ export interface components {
              * @description LLM-only guidance; omitted from the UI.
              */
             llm_hint?: string | null;
+            /**
+             * Docs Url
+             * @description Documentation URL shown in the node editor.
+             */
+            docs_url?: string | null;
             category: components["schemas"]["NodeCategory"];
             /** Icon */
             icon: string;
@@ -759,6 +978,18 @@ export interface components {
             spec_version: string;
             /** Node Types */
             node_types: components["schemas"]["NodeSpec"][];
+        };
+        /**
+         * NumberInputOptions
+         * @description Renderer hints for numeric inputs.
+         */
+        NumberInputOptions: {
+            /**
+             * Fractional
+             * @description Allow arbitrary fractional values via step='any'.
+             * @default false
+             */
+            fractional: boolean;
         };
         /**
          * PresetToolParameter
@@ -789,6 +1020,17 @@ export interface components {
             required: boolean;
         };
         /**
+         * PropertyLayoutOptions
+         * @description Renderer layout hints for a property in the node editor.
+         */
+        PropertyLayoutOptions: {
+            /**
+             * Column Span
+             * @description Number of columns to occupy in the editor's 12-column grid.
+             */
+            column_span?: number | null;
+        };
+        /**
          * PropertyOption
          * @description An option in an `options` or `multi_options` dropdown.
          */
@@ -799,6 +1041,16 @@ export interface components {
             label: string;
             /** Description */
             description?: string | null;
+        };
+        /**
+         * PropertyRendererOptions
+         * @description Typed renderer metadata for node properties.
+         *
+         *     Add new renderer behavior here instead of using free-form property metadata.
+         */
+        PropertyRendererOptions: {
+            layout?: components["schemas"]["PropertyLayoutOptions"] | null;
+            number_input?: components["schemas"]["NumberInputOptions"] | null;
         };
         /**
          * PropertySpec
@@ -855,10 +1107,7 @@ export interface components {
             pattern?: string | null;
             /** Editor */
             editor?: string | null;
-            /** Extra */
-            extra?: {
-                [key: string]: unknown;
-            };
+            renderer_options?: components["schemas"]["PropertyRendererOptions"] | null;
         };
         /**
          * PropertyType
@@ -917,6 +1166,61 @@ export interface components {
             created_at: string;
             /** Is Active */
             is_active: boolean;
+        };
+        /** ServiceOverride */
+        ServiceOverride: {
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            };
+            /** Provider Connection Uuid */
+            provider_connection_uuid?: string | null;
+        };
+        /** ServiceSelection */
+        ServiceSelection: {
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Provider Connection Uuid
+             * Format: uuid
+             */
+            provider_connection_uuid: string;
+        };
+        /** ToolDelayedAudioMessage */
+        ToolDelayedAudioMessage: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "audio";
+            /** Recording Id */
+            recording_id: number;
+            /**
+             * Event
+             * @constant
+             */
+            event: "delayed";
+            /** After Ms */
+            after_ms: number;
+        };
+        /** ToolDelayedTextMessage */
+        ToolDelayedTextMessage: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "text";
+            /** Text */
+            text: string;
+            /**
+             * Event
+             * @constant
+             */
+            event: "delayed";
+            /** After Ms */
+            after_ms: number;
         };
         /**
          * ToolParameter
@@ -980,39 +1284,146 @@ export interface components {
             updated_at: string | null;
             created_by?: components["schemas"]["CreatedByResponse"] | null;
         };
+        /** ToolStartAudioMessage */
+        ToolStartAudioMessage: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "audio";
+            /** Recording Id */
+            recording_id: number;
+            /**
+             * Event
+             * @constant
+             */
+            event: "start";
+        };
+        /** ToolStartTextMessage */
+        ToolStartTextMessage: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "text";
+            /** Text */
+            text: string;
+            /**
+             * Event
+             * @constant
+             */
+            event: "start";
+        };
+        /**
+         * TransferAgentConfig
+         * @description Configuration for Transfer Agent tools.
+         *
+         *     One tool, one destination. An agent that can hand the caller to several
+         *     places gets several of these tools, and the model chooses between them the
+         *     way it chooses between any other tools -- by their names and descriptions.
+         *     That keeps the routing decision in the one place the model already reasons
+         *     about, and leaves nothing to configure here but where the call goes.
+         *
+         *     Most of how a handoff sounds is fixed: the caller hears a ringer while the
+         *     next agent is prepared. The handover line is configurable because it is
+         *     caller-facing and Dograh runs in more than one language, and so is how the
+         *     next agent opens: an agent that greets callers on its own number should
+         *     not re-introduce itself mid-conversation, and one that only ever answers
+         *     handoffs needs a line of its own before it picks the conversation up.
+         */
+        TransferAgentConfig: {
+            /**
+             * Workflow Id
+             * @description Id of the Dograh agent to transfer to. Must be in the same organization, and must not be a speech-to-speech agent.
+             */
+            workflow_id: number;
+            /**
+             * Greeting Mode
+             * @description How the destination agent opens. 'start_greeting' plays its Start Call greeting and waits for the caller. 'continue' skips the greeting and opens with a reply generated from the handover note. 'introduce_and_continue' speaks the introduction in the destination's own voice and then opens with a generated reply, so the caller hears who picked up without having to repeat themselves.
+             * @default start_greeting
+             * @enum {string}
+             */
+            greeting_mode: "start_greeting" | "continue" | "introduce_and_continue";
+            /**
+             * Introduction
+             * @description What the destination agent says as it takes over, in its own voice, before its first generated reply. Required with greeting_mode 'introduce_and_continue' and not accepted otherwise. Supports template variables.
+             */
+            introduction?: string | null;
+        };
+        /**
+         * TransferAgentToolDefinition
+         * @description Tool definition for Transfer Agent tools.
+         */
+        TransferAgentToolDefinition: {
+            /**
+             * Schema Version
+             * @description Schema version.
+             * @default 1
+             */
+            schema_version: number;
+            /**
+             * Messages
+             * @description One start text message, with template variables supported. Omit to use the default handover line, or send an empty list for a silent handoff.
+             */
+            messages?: (components["schemas"]["ToolStartTextMessage"] | components["schemas"]["ToolStartAudioMessage"] | components["schemas"]["ToolDelayedTextMessage"] | components["schemas"]["ToolDelayedAudioMessage"])[];
+            /**
+             * @description Tool type. (enum property replaced by openapi-typescript)
+             * @enum {string}
+             */
+            type: "transfer_agent";
+            /** @description Transfer Agent configuration. */
+            config: components["schemas"]["TransferAgentConfig"];
+        };
         /**
          * TransferCallConfig
          * @description Configuration for Transfer Call tools.
          */
         TransferCallConfig: {
             /**
-             * Destination
-             * @description Phone number or SIP endpoint to transfer the call to, e.g. +1234567890 or PJSIP/1234.
+             * Introduction Enabled
+             * @description Play a generated introduction in the agent's voice to both parties before connecting them. Supported for Twilio calls with a TTS provider. Realtime speech-to-speech agents and synthesis failures skip the introduction.
+             * @default false
              */
-            destination: string;
+            introduction_enabled: boolean;
             /**
-             * Messagetype
-             * @description Type of message to play before transfer.
-             * @default none
+             * Introduction Prompt
+             * @description Instructions for the transfer introduction, including language.
+             * @default Briefly introduce this caller to the person receiving the transfer. Include their reason for calling, essential details, and any explicit language preference. Use the caller's preferred language. Keep it to one sentence, at most 25 words. Do not invent details.
+             */
+            introduction_prompt: string;
+            /**
+             * Destination Source
+             * @description Whether the destination is static/template, resolved by HTTP, or selected by ordered gathered/initial-context mapping rules.
+             * @default static
              * @enum {string}
              */
-            messageType: "none" | "custom" | "audio";
+            destination_source: "static" | "dynamic" | "context_mapping";
             /**
-             * Custommessage
-             * @description Custom message to play before transferring.
+             * Destination
+             * @description Phone number, SIP endpoint, or template to transfer the call to, e.g. +1234567890, PJSIP/1234, or {{initial_context.transfer_destination}}.
+             * @default
              */
-            customMessage?: string | null;
-            /**
-             * Audiorecordingid
-             * @description Recording ID for audio message before transfer.
-             */
-            audioRecordingId?: string | null;
+            destination: string;
             /**
              * Timeout
              * @description Maximum seconds to wait for the destination to answer.
              * @default 30
              */
             timeout: number;
+            /**
+             * Call Disposition
+             * @description Optional disposition to record after a successful transfer. When omitted, Dograh records its provider-specific transfer default.
+             */
+            call_disposition?: string | null;
+            /**
+             * Parameters
+             * @description Parameters the model may provide when calling this transfer tool, for example state, department, or transfer reason.
+             */
+            parameters?: components["schemas"]["ToolParameter"][] | null;
+            /** @description Optional resolver that determines transfer routing at call time. */
+            resolver?: components["schemas"]["HttpTransferResolverConfig"] | null;
+            /** @description Optional ordered context-to-destination routing rules. */
+            context_mapping?: components["schemas"]["ContextDestinationMappingConfig"] | null;
         };
         /**
          * TransferCallToolDefinition
@@ -1025,6 +1436,11 @@ export interface components {
              * @default 1
              */
             schema_version: number;
+            /**
+             * Messages
+             * @description Configured speech. An empty list disables announcements. HTTP/MCP choose one start entry and one entry per delayed timing at random. End-call and transfer tools support one start entry only.
+             */
+            messages?: (components["schemas"]["ToolStartTextMessage"] | components["schemas"]["ToolStartAudioMessage"] | components["schemas"]["ToolDelayedTextMessage"] | components["schemas"]["ToolDelayedAudioMessage"])[];
             /**
              * @description Tool type. (enum property replaced by openapi-typescript)
              * @enum {string}
@@ -1045,10 +1461,7 @@ export interface components {
             template_context_variables?: {
                 [key: string]: unknown;
             } | null;
-            /** Workflow Configurations */
-            workflow_configurations?: {
-                [key: string]: unknown;
-            } | null;
+            workflow_configurations?: components["schemas"]["WorkflowConfigurationDefaults"] | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -1062,6 +1475,75 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WorkflowConfigurationDefaults */
+        WorkflowConfigurationDefaults: {
+            model_configuration_override?: components["schemas"]["ModelConfigurationOverride"] | null;
+            ambient_noise_configuration?: components["schemas"]["AmbientNoiseConfigurationDefaults"];
+            /**
+             * Max Call Duration
+             * @default 300
+             */
+            max_call_duration: number;
+            /**
+             * Max User Idle Timeout
+             * @default 10
+             */
+            max_user_idle_timeout: number;
+            /**
+             * Smart Turn Stop Secs
+             * @default 2
+             */
+            smart_turn_stop_secs: number;
+            /**
+             * Turn Start Strategy
+             * @default min_words
+             * @enum {string}
+             */
+            turn_start_strategy: "default" | "min_words";
+            /**
+             * Turn Start Min Words
+             * @default 2
+             */
+            turn_start_min_words: number;
+            /**
+             * Turn Stop Strategy
+             * @default transcription
+             * @enum {string}
+             */
+            turn_stop_strategy: "transcription" | "turn_analyzer";
+            /**
+             * Dictionary
+             * @default
+             */
+            dictionary: string;
+            /**
+             * Context Compaction Enabled
+             * @default false
+             */
+            context_compaction_enabled: boolean;
+            /**
+             * Tts Cache Enabled
+             * @description Reuse generated speech for repeated phrases. Supports MiniMax TTS.
+             * @default false
+             */
+            tts_cache_enabled: boolean;
+            /**
+             * Call Dispositions
+             * @description Allowed business outcomes for terminal call classification. Each entry defines the exact stored code and the criteria for selecting it.
+             */
+            call_dispositions?: components["schemas"]["CallDispositionOption"][];
+            /**
+             * Text Chat Inactivity Timeout Seconds
+             * @default 1800
+             */
+            text_chat_inactivity_timeout_seconds: number;
+            /** External Pbx Field Mappings */
+            external_pbx_field_mappings?: components["schemas"]["ExternalPBXFieldMapping"][];
+            /** External Pbx Lead Headers */
+            external_pbx_lead_headers?: string[];
+        } & {
+            [key: string]: unknown;
         };
         /**
          * WorkflowListResponse
@@ -1130,8 +1612,13 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type AmbientNoiseConfigurationDefaults = components['schemas']['AmbientNoiseConfigurationDefaults'];
 export type CalculatorToolDefinition = components['schemas']['CalculatorToolDefinition'];
 export type CallDispositionCodes = components['schemas']['CallDispositionCodes'];
+export type CallDispositionOption = components['schemas']['CallDispositionOption'];
+export type ContextDestinationMappingConfig = components['schemas']['ContextDestinationMappingConfig'];
+export type ContextDestinationRoute = components['schemas']['ContextDestinationRoute'];
+export type ContextDestinationRule = components['schemas']['ContextDestinationRule'];
 export type CreateToolRequest = components['schemas']['CreateToolRequest'];
 export type CreateWorkflowRequest = components['schemas']['CreateWorkflowRequest'];
 export type CreatedByResponse = components['schemas']['CreatedByResponse'];
@@ -1141,29 +1628,48 @@ export type DocumentListResponseSchema = components['schemas']['DocumentListResp
 export type DocumentResponseSchema = components['schemas']['DocumentResponseSchema'];
 export type EndCallConfig = components['schemas']['EndCallConfig'];
 export type EndCallToolDefinition = components['schemas']['EndCallToolDefinition'];
+export type ErrorCondition = components['schemas']['ErrorCondition'];
+export type ExternalPbxFieldMapping = components['schemas']['ExternalPBXFieldMapping'];
+export type FallbackPolicyServiceSelection = components['schemas']['FallbackPolicy_ServiceSelection_'];
+export type FallbackRuleServiceSelection = components['schemas']['FallbackRule_ServiceSelection_'];
 export type GraphConstraints = components['schemas']['GraphConstraints'];
 export type HttpValidationError = components['schemas']['HTTPValidationError'];
 export type HttpApiConfig = components['schemas']['HttpApiConfig'];
 export type HttpApiToolDefinition = components['schemas']['HttpApiToolDefinition'];
+export type HttpTransferResolverConfig = components['schemas']['HttpTransferResolverConfig'];
 export type InitiateCallRequest = components['schemas']['InitiateCallRequest'];
 export type McpToolConfig = components['schemas']['McpToolConfig'];
 export type McpToolDefinition = components['schemas']['McpToolDefinition'];
+export type ModelConfigurationOverride = components['schemas']['ModelConfigurationOverride'];
+export type NoOutputCondition = components['schemas']['NoOutputCondition'];
 export type NodeCategory = components['schemas']['NodeCategory'];
 export type NodeExample = components['schemas']['NodeExample'];
 export type NodeSpec = components['schemas']['NodeSpec'];
 export type NodeTypesResponse = components['schemas']['NodeTypesResponse'];
+export type NumberInputOptions = components['schemas']['NumberInputOptions'];
 export type PresetToolParameter = components['schemas']['PresetToolParameter'];
+export type PropertyLayoutOptions = components['schemas']['PropertyLayoutOptions'];
 export type PropertyOption = components['schemas']['PropertyOption'];
+export type PropertyRendererOptions = components['schemas']['PropertyRendererOptions'];
 export type PropertySpec = components['schemas']['PropertySpec'];
 export type PropertyType = components['schemas']['PropertyType'];
 export type RecordingListResponseSchema = components['schemas']['RecordingListResponseSchema'];
 export type RecordingResponseSchema = components['schemas']['RecordingResponseSchema'];
+export type ServiceOverride = components['schemas']['ServiceOverride'];
+export type ServiceSelection = components['schemas']['ServiceSelection'];
+export type ToolDelayedAudioMessage = components['schemas']['ToolDelayedAudioMessage'];
+export type ToolDelayedTextMessage = components['schemas']['ToolDelayedTextMessage'];
 export type ToolParameter = components['schemas']['ToolParameter'];
 export type ToolResponse = components['schemas']['ToolResponse'];
+export type ToolStartAudioMessage = components['schemas']['ToolStartAudioMessage'];
+export type ToolStartTextMessage = components['schemas']['ToolStartTextMessage'];
+export type TransferAgentConfig = components['schemas']['TransferAgentConfig'];
+export type TransferAgentToolDefinition = components['schemas']['TransferAgentToolDefinition'];
 export type TransferCallConfig = components['schemas']['TransferCallConfig'];
 export type TransferCallToolDefinition = components['schemas']['TransferCallToolDefinition'];
 export type UpdateWorkflowRequest = components['schemas']['UpdateWorkflowRequest'];
 export type ValidationError = components['schemas']['ValidationError'];
+export type WorkflowConfigurationDefaults = components['schemas']['WorkflowConfigurationDefaults'];
 export type WorkflowListResponse = components['schemas']['WorkflowListResponse'];
 export type WorkflowResponse = components['schemas']['WorkflowResponse'];
 export type $defs = Record<string, never>;

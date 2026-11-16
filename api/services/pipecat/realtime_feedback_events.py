@@ -30,6 +30,7 @@ def build_user_transcription_event(
     text: str,
     final: bool,
     timestamp: str | None = None,
+    end_timestamp: str | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -38,6 +39,8 @@ def build_user_transcription_event(
     }
     if timestamp is not None:
         payload["timestamp"] = timestamp
+    if end_timestamp is not None:
+        payload["end_timestamp"] = end_timestamp
     if user_id is not None:
         payload["user_id"] = user_id
     return {
@@ -50,10 +53,13 @@ def build_bot_text_event(
     *,
     text: str,
     timestamp: str | None = None,
+    end_timestamp: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"text": text}
     if timestamp is not None:
         payload["timestamp"] = timestamp
+    if end_timestamp is not None:
+        payload["end_timestamp"] = end_timestamp
     return {
         "type": RealtimeFeedbackType.BOT_TEXT.value,
         "payload": payload,
@@ -106,13 +112,20 @@ def build_ttfb_metric_event(
     ttfb_seconds: float,
     processor: str | None,
     model: str | None,
+    kind: str,
 ) -> dict[str, Any]:
+    """``kind`` ("stt" | "llm" | "tts") names the pipeline stage measured.
+
+    Runs recorded before STT and TTS were forwarded carry no ``kind``; those events
+    are LLM measurements, so consumers read a missing ``kind`` as "llm".
+    """
     return {
         "type": RealtimeFeedbackType.TTFB_METRIC.value,
         "payload": {
             "ttfb_seconds": ttfb_seconds,
             "processor": processor,
             "model": model,
+            "kind": kind,
         },
     }
 
@@ -158,6 +171,9 @@ def stamp_realtime_feedback_event(
     return stamped
 
 
-def realtime_feedback_event_sort_key(event: dict[str, Any]) -> str:
-    payload_timestamp = (event.get("payload") or {}).get("timestamp")
-    return payload_timestamp or event.get("timestamp") or ""
+def realtime_feedback_event_sort_key(event: dict[str, Any]) -> tuple[str, int]:
+    payload = event.get("payload") or {}
+    timestamp = event.get("timestamp") or payload.get("timestamp") or ""
+    # A completed greeting answers speech heard in its background. Both events
+    # share an ordering timestamp; keep the user first without altering audio times.
+    return timestamp, 0 if payload.get("background_greeting_id") else 1

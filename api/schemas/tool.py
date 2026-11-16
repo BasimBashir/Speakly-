@@ -8,9 +8,8 @@ when the same schema is surfaced through MCP or SDK authoring flows.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -18,6 +17,13 @@ from api.enums import ToolCategory
 
 DEFAULT_MCP_TIMEOUT_SECS = 30
 DEFAULT_MCP_SSE_READ_TIMEOUT_SECS = 300
+MAX_TRANSFER_CALL_DISPOSITION_LENGTH = 64
+DEFAULT_TRANSFER_INTRODUCTION_PROMPT = (
+    "Briefly introduce this caller to the person receiving the transfer. "
+    "Include their reason for calling, essential details, and any explicit "
+    "language preference. Use the caller's preferred language. Keep it to one "
+    "sentence, at most 25 words. Do not invent details."
+)
 
 ToolParameterType = Literal["string", "number", "boolean", "object", "array"]
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
@@ -25,6 +31,7 @@ ToolCategoryValue = Literal[
     "http_api",
     "end_call",
     "transfer_call",
+    "transfer_agent",
     "calculator",
     "native",
     "integration",
@@ -89,6 +96,8 @@ class PresetToolParameter(BaseModel):
 class HttpApiConfig(BaseModel):
     """Configuration for HTTP API tools."""
 
+    model_config = ConfigDict(extra="forbid")
+
     method: HttpMethod = Field(
         description="HTTP method to use for the request.",
         json_schema_extra=_llm_hint("Use one of GET, POST, PUT, PATCH, DELETE."),
@@ -100,7 +109,7 @@ class HttpApiConfig(BaseModel):
             "not embedded in the URL."
         ),
     )
-    headers: Optional[Dict[str, str]] = Field(
+    headers: dict[str, str] | None = Field(
         default=None,
         description="Static headers to include with every request.",
         json_schema_extra=_llm_hint(
@@ -108,7 +117,7 @@ class HttpApiConfig(BaseModel):
             "and reference them with credential_uuid."
         ),
     )
-    credential_uuid: Optional[str] = Field(
+    credential_uuid: str | None = Field(
         default=None,
         description="Reference to an external credential for request authentication.",
         json_schema_extra=_llm_hint(
@@ -116,30 +125,44 @@ class HttpApiConfig(BaseModel):
             "not create credential secrets."
         ),
     )
-    parameters: Optional[List[ToolParameter]] = Field(
+    parameters: list[ToolParameter] | None = Field(
         default=None,
         description="Parameters the model must provide when calling this tool.",
     )
-    preset_parameters: Optional[List[PresetToolParameter]] = Field(
+    preset_parameters: list[PresetToolParameter] | None = Field(
         default=None,
         description=(
             "Parameters injected by Dograh from fixed values or workflow context "
             "templates."
         ),
     )
-    timeout_ms: Optional[int] = Field(
+    timeout_ms: int | None = Field(
         default=5000,
         ge=1,
         description="Request timeout in milliseconds.",
     )
-    customMessage: Optional[str] = Field(
-        default=None, description="Custom message to play after tool execution."
+    body_template: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional JSON body template for POST, PUT, and PATCH requests.",
+        json_schema_extra=_llm_hint(
+            "Use {{parameter_name}} placeholders to position LLM and preset "
+            "parameters anywhere in the body, including nested objects and arrays; "
+            "also {{initial_context.*}}. A value that is exactly one placeholder "
+            "keeps the value's original JSON type. Omit this field to send all "
+            "parameters as a flat top-level JSON object. Ignored for GET and DELETE."
+        ),
     )
-    customMessageType: Optional[Literal["text", "audio"]] = Field(
-        default=None, description="Type of custom message."
-    )
-    customMessageRecordingId: Optional[str] = Field(
-        default=None, description="Recording ID for an audio custom message."
+    body_format: Literal["json", "form"] = Field(
+        default="json",
+        description=(
+            "Encoding of the POST, PUT, and PATCH request body: 'json' sends "
+            "application/json, 'form' sends application/x-www-form-urlencoded."
+        ),
+        json_schema_extra=_llm_hint(
+            "Use 'form' only for APIs that accept form-encoded bodies and "
+            "reject JSON. In form mode, list values repeat the field name once per "
+            "item and object values are sent as JSON strings."
+        ),
     )
 
     @field_validator("method", mode="before")
@@ -156,15 +179,8 @@ class HttpApiConfig(BaseModel):
 class EndCallConfig(BaseModel):
     """Configuration for End Call tools."""
 
-    messageType: Literal["none", "custom", "audio"] = Field(
-        default="none", description="Type of goodbye message."
-    )
-    customMessage: Optional[str] = Field(
-        default=None, description="Custom message to play before ending the call."
-    )
-    audioRecordingId: Optional[str] = Field(
-        default=None, description="Recording ID for audio goodbye message."
-    )
+    model_config = ConfigDict(extra="forbid")
+
     endCallReason: bool = Field(
         default=False,
         description=(
@@ -172,7 +188,7 @@ class EndCallConfig(BaseModel):
             "The reason is set as call disposition and added to call tags."
         ),
     )
-    endCallReasonDescription: Optional[str] = Field(
+    endCallReasonDescription: str | None = Field(
         default=None,
         description=(
             "Description shown to the model for the reason parameter. Used only "
@@ -181,23 +197,208 @@ class EndCallConfig(BaseModel):
     )
 
 
+class HttpTransferResolverConfig(BaseModel):
+    """HTTP endpoint used to resolve transfer destination at call time."""
+
+    type: Literal["http"] = Field(default="http", description="Resolver type.")
+    url: str = Field(description="HTTP or HTTPS endpoint for transfer resolution.")
+    headers: dict[str, str] | None = Field(
+        default=None,
+        description="Static headers to include with every resolver request.",
+    )
+    credential_uuid: str | None = Field(
+        default=None,
+        description="Reference to an external credential for resolver authentication.",
+    )
+    timeout_ms: int = Field(
+        default=3000,
+        ge=500,
+        le=5000,
+        description="Resolver request timeout in milliseconds.",
+    )
+    wait_message: str | None = Field(
+        default=None,
+        description="Optional short message played while Dograh resolves routing.",
+    )
+    parameters: list[ToolParameter] | None = Field(
+        default=None,
+        description="Parameters the model may provide when calling this transfer tool.",
+    )
+    preset_parameters: list[PresetToolParameter] | None = Field(
+        default=None,
+        description=(
+            "Parameters injected by Dograh from fixed values or workflow context "
+            "templates."
+        ),
+    )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.startswith(("http://", "https://")):
+            raise ValueError("config.resolver.url must be an http(s) URL")
+        return v
+
+
+class ContextDestinationRoute(BaseModel):
+    """Map one context value to a transfer destination."""
+
+    context_value: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Context value that selects this destination.",
+    )
+    destination: str = Field(
+        min_length=1,
+        max_length=255,
+        description=(
+            "VICIdial in-group, SIP endpoint, E.164 phone number, or context "
+            "template used when this route matches."
+        ),
+    )
+
+    @field_validator("context_value", "destination")
+    @classmethod
+    def strip_non_empty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("mapping values cannot be blank")
+        return stripped
+
+
+class ContextDestinationRule(BaseModel):
+    """One context lookup with its value-to-destination routes."""
+
+    context_path: str = Field(
+        min_length=1,
+        max_length=255,
+        description=(
+            "Context path used for routing. An unprefixed path checks gathered "
+            "context first, then initial context; use initial_context.* or "
+            "gathered_context.* to select one explicitly."
+        ),
+    )
+    routes: list[ContextDestinationRoute] = Field(min_length=1, max_length=100)
+
+    @field_validator("context_path")
+    @classmethod
+    def strip_context_path(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("context path cannot be blank")
+        return stripped
+
+    @model_validator(mode="after")
+    def validate_unique_values(self):
+        values = [route.context_value.casefold() for route in self.routes]
+        if len(values) != len(set(values)):
+            raise ValueError("context mapping values must be unique")
+        return self
+
+
+class ContextDestinationMappingConfig(BaseModel):
+    """Resolve a transfer destination from gathered or initial context.
+
+    Rules are evaluated in order. The first rule whose context value matches
+    one of its routes wins; ``fallback_destination`` applies only when no rule
+    matched. Destinations may be provider-native values or context templates.
+    """
+
+    rules: list[ContextDestinationRule] | None = Field(
+        default=None,
+        description="Ordered routing rules evaluated top to bottom; first match wins.",
+    )
+    context_path: str | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Deprecated single-rule context path. Use rules instead; accepted for "
+            "backward compatibility."
+        ),
+    )
+    routes: list[ContextDestinationRoute] | None = Field(
+        default=None,
+        exclude=True,
+        description=(
+            "Deprecated single-rule routes. Use rules instead; accepted for "
+            "backward compatibility."
+        ),
+    )
+    fallback_destination: str | None = Field(
+        default=None,
+        max_length=255,
+        description=(
+            "Optional provider-native destination or context template used when "
+            "no rule matched."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def fold_single_rule(cls, data: Any) -> Any:
+        """Accept the legacy single-rule shape (context_path plus routes)."""
+        if not isinstance(data, dict) or data.get("rules") is not None:
+            return data
+        if "context_path" not in data and "routes" not in data:
+            return data
+        folded = {
+            key: value
+            for key, value in data.items()
+            if key not in ("context_path", "routes")
+        }
+        folded["rules"] = [
+            {"context_path": data.get("context_path"), "routes": data.get("routes")}
+        ]
+        return folded
+
+    @model_validator(mode="after")
+    def require_rules(self):
+        if not self.rules:
+            raise ValueError("context mapping rules must contain at least one rule")
+        if len(self.rules) > 20:
+            raise ValueError("context mapping rules cannot contain more than 20 rules")
+        return self
+
+    @field_validator("fallback_destination")
+    @classmethod
+    def normalize_fallback(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
 class TransferCallConfig(BaseModel):
     """Configuration for Transfer Call tools."""
 
-    destination: str = Field(
+    model_config = ConfigDict(extra="forbid")
+
+    introduction_enabled: bool = Field(
+        default=False,
         description=(
-            "Phone number or SIP endpoint to transfer the call to, e.g. "
-            "+1234567890 or PJSIP/1234."
-        )
+            "Play a generated introduction in the agent's voice to both parties "
+            "before connecting them. Supported for Twilio calls with a TTS "
+            "provider. Realtime speech-to-speech agents and synthesis failures "
+            "skip the introduction."
+        ),
     )
-    messageType: Literal["none", "custom", "audio"] = Field(
-        default="none", description="Type of message to play before transfer."
+    introduction_prompt: str = Field(
+        default=DEFAULT_TRANSFER_INTRODUCTION_PROMPT,
+        max_length=2000,
+        description="Instructions for the transfer introduction, including language.",
     )
-    customMessage: Optional[str] = Field(
-        default=None, description="Custom message to play before transferring."
+    destination_source: Literal["static", "dynamic", "context_mapping"] = Field(
+        default="static",
+        description=(
+            "Whether the destination is static/template, resolved by HTTP, or "
+            "selected by ordered gathered/initial-context mapping rules."
+        ),
     )
-    audioRecordingId: Optional[str] = Field(
-        default=None, description="Recording ID for audio message before transfer."
+    destination: str = Field(
+        default="",
+        description=(
+            "Phone number, SIP endpoint, or template to transfer the call to, e.g. "
+            "+1234567890, PJSIP/1234, or {{initial_context.transfer_destination}}."
+        ),
     )
     timeout: int = Field(
         default=30,
@@ -205,26 +406,53 @@ class TransferCallConfig(BaseModel):
         le=120,
         description="Maximum seconds to wait for the destination to answer.",
     )
+    call_disposition: str | None = Field(
+        default=None,
+        max_length=MAX_TRANSFER_CALL_DISPOSITION_LENGTH,
+        description=(
+            "Optional disposition to record after a successful transfer. When "
+            "omitted, Dograh records its provider-specific transfer default."
+        ),
+    )
+    parameters: list[ToolParameter] | None = Field(
+        default=None,
+        description=(
+            "Parameters the model may provide when calling this transfer tool, "
+            "for example state, department, or transfer reason."
+        ),
+    )
+    resolver: HttpTransferResolverConfig | None = Field(
+        default=None,
+        description="Optional resolver that determines transfer routing at call time.",
+    )
+    context_mapping: ContextDestinationMappingConfig | None = Field(
+        default=None,
+        description="Optional ordered context-to-destination routing rules.",
+    )
 
-    @field_validator("destination")
+    @field_validator("call_disposition", mode="before")
     @classmethod
-    def validate_destination(cls, v: str) -> str:
-        """Validate that destination is a valid E.164 phone number or SIP endpoint."""
-        if not v.strip():
-            return v
+    def normalize_call_disposition(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
 
-        e164_pattern = r"^\+[1-9]\d{1,14}$"
-        sip_pattern = r"^(PJSIP|SIP)/[\w\-\.@]+$"
-
-        is_valid_e164 = re.match(e164_pattern, v)
-        is_valid_sip = re.match(sip_pattern, v, re.IGNORECASE)
-
-        if not (is_valid_e164 or is_valid_sip):
+    @model_validator(mode="after")
+    def validate_destination_source_config(self):
+        if self.destination_source == "dynamic" and self.resolver is None:
             raise ValueError(
-                "Destination must be a valid E.164 phone number "
-                "(e.g., +1234567890) or SIP endpoint (e.g., PJSIP/1234)"
+                "config.resolver is required when destination_source is dynamic"
             )
-        return v
+        if (
+            self.destination_source == "context_mapping"
+            and self.context_mapping is None
+        ):
+            raise ValueError(
+                "config.context_mapping is required when destination_source is "
+                "context_mapping"
+            )
+        return self
 
 
 class McpToolConfig(BaseModel):
@@ -238,7 +466,7 @@ class McpToolConfig(BaseModel):
         description="MCP server URL. Must use http:// or https://.",
         json_schema_extra=_llm_hint("Use the server's streamable HTTP MCP endpoint."),
     )
-    credential_uuid: Optional[str] = Field(
+    credential_uuid: str | None = Field(
         default=None,
         description="Reference to an external credential for MCP server auth.",
         json_schema_extra=_llm_hint(
@@ -288,53 +516,224 @@ class McpToolConfig(BaseModel):
         return v
 
 
-class HttpApiToolDefinition(BaseModel):
-    """Tool definition for HTTP API tools."""
+class ToolMessageText(BaseModel):
+    """A literal phrase spoken by the agent's TTS voice."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    type: Literal["text"]
+    text: str = Field(min_length=1)
+
+
+class ToolMessageAudio(BaseModel):
+    """An organization-owned recording, referenced by its immutable primary key."""
+
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["audio"]
+    recording_id: int = Field(gt=0)
+
+
+class ToolStartTextMessage(ToolMessageText):
+    event: Literal["start"]
+
+
+class ToolStartAudioMessage(ToolMessageAudio):
+    event: Literal["start"]
+
+
+class ToolDelayedTextMessage(ToolMessageText):
+    event: Literal["delayed"]
+    after_ms: int = Field(gt=0, le=120000)
+
+
+class ToolDelayedAudioMessage(ToolMessageAudio):
+    event: Literal["delayed"]
+    after_ms: int = Field(gt=0, le=120000)
+
+
+ToolMessage = (
+    ToolStartTextMessage
+    | ToolStartAudioMessage
+    | ToolDelayedTextMessage
+    | ToolDelayedAudioMessage
+)
+ToolMessages = list[ToolMessage]
+
+
+class ToolDefinitionBase(BaseModel):
+    """Shared message format; supported events depend on the tool's behavior."""
 
     schema_version: int = Field(default=1, description="Schema version.")
+    messages: ToolMessages = Field(
+        default_factory=list,
+        max_length=220,
+        description=(
+            "Configured speech. An empty list disables announcements. HTTP/MCP "
+            "choose one start entry and one entry per delayed timing at random. "
+            "End-call and transfer tools support one start entry only."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_messages(self):
+        tool_type = self.type
+        if tool_type == "calculator" and self.messages:
+            raise ValueError("Calculator tools do not support messages")
+        if tool_type in {"end_call", "transfer_call", "transfer_agent"}:
+            if len(self.messages) > 1 or any(m.event != "start" for m in self.messages):
+                raise ValueError("This tool supports at most one start message")
+            if tool_type == "transfer_agent" and any(
+                m.type != "text" for m in self.messages
+            ):
+                raise ValueError("Agent transfer supports text messages only")
+            if tool_type == "transfer_agent" and any(
+                len(m.text) > 500 for m in self.messages
+            ):
+                raise ValueError(
+                    "Agent-transfer messages must be at most 500 characters"
+                )
+        counts: dict[int, int] = {}
+        for message in self.messages:
+            timing = message.after_ms if message.event == "delayed" else 0
+            counts[timing] = counts.get(timing, 0) + 1
+        if any(count > 20 for count in counts.values()):
+            raise ValueError("Each event and timing supports at most 20 variants")
+        if len(counts.keys() - {0}) > 10:
+            raise ValueError("At most 10 delayed timings are supported")
+        return self
+
+
+class HttpApiToolDefinition(ToolDefinitionBase):
+    """Tool definition for HTTP API tools."""
+
     type: Literal["http_api"] = Field(description="Tool type.")
     config: HttpApiConfig = Field(description="HTTP API configuration.")
 
 
-class EndCallToolDefinition(BaseModel):
+class EndCallToolDefinition(ToolDefinitionBase):
     """Tool definition for End Call tools."""
 
-    schema_version: int = Field(default=1, description="Schema version.")
     type: Literal["end_call"] = Field(description="Tool type.")
     config: EndCallConfig = Field(description="End Call configuration.")
 
 
-class TransferCallToolDefinition(BaseModel):
+class TransferCallToolDefinition(ToolDefinitionBase):
     """Tool definition for Transfer Call tools."""
 
-    schema_version: int = Field(default=1, description="Schema version.")
     type: Literal["transfer_call"] = Field(description="Tool type.")
     config: TransferCallConfig = Field(description="Transfer Call configuration.")
 
 
-class CalculatorToolDefinition(BaseModel):
+TransferGreetingMode = Literal["start_greeting", "continue", "introduce_and_continue"]
+
+
+class TransferAgentConfig(BaseModel):
+    """Configuration for Transfer Agent tools.
+
+    One tool, one destination. An agent that can hand the caller to several
+    places gets several of these tools, and the model chooses between them the
+    way it chooses between any other tools -- by their names and descriptions.
+    That keeps the routing decision in the one place the model already reasons
+    about, and leaves nothing to configure here but where the call goes.
+
+    Most of how a handoff sounds is fixed: the caller hears a ringer while the
+    next agent is prepared. The handover line is configurable because it is
+    caller-facing and Dograh runs in more than one language, and so is how the
+    next agent opens: an agent that greets callers on its own number should
+    not re-introduce itself mid-conversation, and one that only ever answers
+    handoffs needs a line of its own before it picks the conversation up.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_id: int = Field(
+        description=(
+            "Id of the Dograh agent to transfer to. Must be in the same "
+            "organization, and must not be a speech-to-speech agent."
+        ),
+        json_schema_extra=_llm_hint(
+            "Name the tool after this agent, e.g. 'Transfer to Billing', and "
+            "describe when to use it -- that is what the model routes on."
+        ),
+    )
+    greeting_mode: TransferGreetingMode = Field(
+        default="start_greeting",
+        description=(
+            "How the destination agent opens. 'start_greeting' plays its Start "
+            "Call greeting and waits for the caller. 'continue' skips the "
+            "greeting and opens with a reply generated from the handover note. "
+            "'introduce_and_continue' speaks the introduction in the "
+            "destination's own voice and then opens with a generated reply, so "
+            "the caller hears who picked up without having to repeat themselves."
+        ),
+    )
+    introduction: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "What the destination agent says as it takes over, in its own voice, "
+            "before its first generated reply. Required with greeting_mode "
+            "'introduce_and_continue' and not accepted otherwise. Supports "
+            "template variables."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _introduction_matches_greeting_mode(self):
+        introduces = self.greeting_mode == "introduce_and_continue"
+        if introduces and not (self.introduction and self.introduction.strip()):
+            raise ValueError(
+                "introduction is required when greeting_mode is "
+                "'introduce_and_continue'"
+            )
+        if not introduces and self.introduction is not None:
+            raise ValueError(
+                "introduction is only accepted when greeting_mode is "
+                "'introduce_and_continue'"
+            )
+        return self
+
+
+class TransferAgentToolDefinition(ToolDefinitionBase):
+    """Tool definition for Transfer Agent tools."""
+
+    type: Literal["transfer_agent"] = Field(description="Tool type.")
+    config: TransferAgentConfig = Field(description="Transfer Agent configuration.")
+    messages: ToolMessages = Field(
+        default_factory=lambda: [
+            ToolStartTextMessage(
+                event="start",
+                type="text",
+                text="Let me connect you with the right person. One moment please.",
+            )
+        ],
+        max_length=220,
+        description=(
+            "One start text message, with template variables supported. Omit to "
+            "use the default handover line, or send an empty list for a silent handoff."
+        ),
+    )
+
+
+class CalculatorToolDefinition(ToolDefinitionBase):
     """Tool definition for Calculator tools."""
 
-    schema_version: int = Field(default=1, description="Schema version.")
     type: Literal["calculator"] = Field(description="Tool type.")
 
 
-class McpToolDefinition(BaseModel):
+class McpToolDefinition(ToolDefinitionBase):
     """Persisted MCP tool definition."""
 
-    schema_version: int = Field(default=1, description="Schema version.")
     type: Literal["mcp"] = Field(description="Tool type.")
     config: McpToolConfig = Field(description="MCP server configuration.")
 
 
 ToolDefinition = Annotated[
-    Union[
-        HttpApiToolDefinition,
-        EndCallToolDefinition,
-        TransferCallToolDefinition,
-        CalculatorToolDefinition,
-        McpToolDefinition,
-    ],
+    HttpApiToolDefinition
+    | EndCallToolDefinition
+    | TransferCallToolDefinition
+    | TransferAgentToolDefinition
+    | CalculatorToolDefinition
+    | McpToolDefinition,
     Field(discriminator="type"),
 ]
 
@@ -350,7 +749,7 @@ class CreateToolRequest(BaseModel):
             "name shown to the agent."
         ),
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         description="Description shown to the agent when deciding whether to call it.",
         json_schema_extra=_llm_hint(
@@ -361,10 +760,10 @@ class CreateToolRequest(BaseModel):
         default=ToolCategory.HTTP_API.value,
         description="Tool category. Must match definition.type.",
     )
-    icon: Optional[str] = Field(
+    icon: str | None = Field(
         default="globe", max_length=50, description="Lucide icon identifier."
     )
-    icon_color: Optional[str] = Field(
+    icon_color: str | None = Field(
         default="#3B82F6", max_length=7, description="Hex color for the tool icon."
     )
     definition: ToolDefinition = Field(description="Typed tool definition.")
@@ -392,7 +791,7 @@ class CreateToolRequest(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_category_matches_definition(self) -> "CreateToolRequest":
+    def validate_category_matches_definition(self) -> CreateToolRequest:
         definition_type = self.definition.type
         if self.category != definition_type:
             raise ValueError(
@@ -405,12 +804,12 @@ class CreateToolRequest(BaseModel):
 class UpdateToolRequest(BaseModel):
     """Request schema for updating a reusable tool."""
 
-    name: Optional[str] = Field(default=None, max_length=255)
-    description: Optional[str] = None
-    icon: Optional[str] = Field(default=None, max_length=50)
-    icon_color: Optional[str] = Field(default=None, max_length=7)
-    definition: Optional[ToolDefinition] = None
-    status: Optional[str] = None
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = None
+    icon: str | None = Field(default=None, max_length=50)
+    icon_color: str | None = Field(default=None, max_length=7)
+    definition: ToolDefinition | None = None
+    status: str | None = None
 
 
 class CreatedByResponse(BaseModel):
@@ -426,15 +825,15 @@ class ToolResponse(BaseModel):
     id: int
     tool_uuid: str
     name: str
-    description: Optional[str]
+    description: str | None
     category: str
-    icon: Optional[str]
-    icon_color: Optional[str]
+    icon: str | None
+    icon_color: str | None
     status: str
-    definition: Dict[str, Any]
+    definition: dict[str, Any]
     created_at: datetime
-    updated_at: Optional[datetime]
-    created_by: Optional[CreatedByResponse] = None
+    updated_at: datetime | None
+    created_by: CreatedByResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -444,4 +843,33 @@ class McpRefreshResponse(BaseModel):
 
     tool_uuid: str
     discovered_tools: list = Field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
+
+
+class ToolTestRequest(BaseModel):
+    """Request body for testing an HTTP API tool outside a live call."""
+
+    llm_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Values for parameters normally supplied by the model.",
+    )
+    preset_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Resolved values for parameters normally supplied from presets.",
+    )
+
+
+class ToolTestResponse(BaseModel):
+    """Result of testing an HTTP API tool."""
+
+    status: str
+    status_code: int | None = None
+    data: Any | None = None
+    error: str | None = None
+    hint: str | None = None
+    request_method: str
+    request_url: str
+    request_headers: dict[str, str] = Field(default_factory=dict)
+    request_body: dict[str, Any] | None = None
+    request_params: dict[str, Any] | None = None
+    duration_ms: int

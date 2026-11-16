@@ -11,6 +11,7 @@ from api.services.integrations.base import IntegrationCompletionContext
 
 from .client import TunerDeliveryConfig, post_call
 from .collector import TUNER_RECORDING_PLACEHOLDER
+from .cost import compute_call_cost_cents
 from .node import TunerNodeData
 
 
@@ -22,6 +23,48 @@ def _build_recording_url(
         base_url = f"{BACKEND_API_ENDPOINT}/api/v1/public/download/workflow/{context.public_token}"
         return f"{base_url}/recording" if workflow_run.recording_url else None
     return workflow_run.recording_url
+
+
+def _apply_call_metadata(
+    payload: dict[str, Any],
+    tuner_data: TunerNodeData,
+    workflow_run: Any,
+) -> None:
+    """Add the user-listed call variables to ``general_meta_data_raw``.
+
+    Looks each key up in ``initial_context`` first, then in
+    ``gathered_context["extracted_variables"]``. Values pass through as-is and
+    keys already set by the SDK are never overwritten.
+    """
+    if not tuner_data.metadata_enabled or not tuner_data.metadata_keys:
+        return
+
+    initial_context = getattr(workflow_run, "initial_context", None) or {}
+    gathered_context = getattr(workflow_run, "gathered_context", None) or {}
+    extracted_variables = gathered_context.get("extracted_variables") or {}
+
+    metadata = payload.setdefault("general_meta_data_raw", {})
+    not_found: list[str] = []
+    for key in tuner_data.metadata_keys:
+        if key in initial_context:
+            value = initial_context[key]
+        elif key in extracted_variables:
+            value = extracted_variables[key]
+        else:
+            not_found.append(key)
+            continue
+
+        if key in metadata:
+            logger.warning(
+                f"Tuner metadata key '{key}' already exists in the payload, not overwriting"
+            )
+            continue
+        metadata[key] = value
+
+    if not_found:
+        logger.info(
+            f"Tuner metadata keys not found in call context: {', '.join(not_found)}"
+        )
 
 
 async def run_completion(
@@ -55,6 +98,16 @@ async def run_completion(
         payload = copy.deepcopy(payload_snapshot)
         payload["recording_url"] = recording_url
 
+        call_cost = compute_call_cost_cents(
+            tuner_data,
+            context.workflow_run.usage_info,
+            transcript_segments=payload.get("transcript_with_tool_calls"),
+        )
+        if call_cost is not None:
+            payload["call_cost"] = call_cost
+
+        _apply_call_metadata(payload, tuner_data, context.workflow_run)
+
         try:
             config = TunerDeliveryConfig(
                 base_url=TUNER_BASE_URL,
@@ -67,6 +120,7 @@ async def run_completion(
                 **delivery,
                 "workspace_id": tuner_data.tuner_workspace_id,
                 "agent_id": tuner_data.tuner_agent_id,
+                **({"call_cost": call_cost} if call_cost is not None else {}),
                 "exported_at": datetime.now(UTC).isoformat(),
             }
         except Exception as exc:

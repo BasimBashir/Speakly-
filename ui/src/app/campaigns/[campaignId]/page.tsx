@@ -16,6 +16,7 @@ import {
     startCampaignApiV1CampaignCampaignIdStartPost,
 } from '@/client/sdk.gen';
 import type { CampaignResponse } from '@/client/types.gen';
+import { PageShell } from '@/components/layout/PageShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -27,10 +28,15 @@ import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { CampaignRuns } from '@/components/workflow-runs';
+import { useOrganizationTimezone } from '@/hooks/useOrganizationTimezone';
 import { useAuth } from '@/lib/auth';
+import { formatDate, formatDateTime } from '@/lib/dateTime';
+
+import CampaignTrafficStats from '../CampaignTrafficStats';
 
 export default function CampaignDetailPage() {
     const { user, getAccessToken, redirectToLogin, loading } = useAuth();
+    const organizationTimezone = useOrganizationTimezone();
     const router = useRouter();
     const params = useParams();
     const searchParams = useSearchParams();
@@ -68,7 +74,7 @@ export default function CampaignDetailPage() {
 
     // Fetch campaign details
     const fetchCampaign = useCallback(async () => {
-        if (!user) return;
+        if (loading || !user) return;
         setIsLoadingCampaign(true);
         try {
             const accessToken = await getAccessToken();
@@ -90,7 +96,7 @@ export default function CampaignDetailPage() {
         } finally {
             setIsLoadingCampaign(false);
         }
-    }, [user, getAccessToken, campaignId]);
+    }, [user, loading, getAccessToken, campaignId]);
 
     // Initial load
     useEffect(() => {
@@ -100,13 +106,6 @@ export default function CampaignDetailPage() {
     // Handle back navigation
     const handleBack = () => {
         router.push('/campaigns');
-    };
-
-    // Handle workflow link click
-    const handleWorkflowClick = () => {
-        if (campaign) {
-            router.push(`/workflow/${campaign.workflow_id}`);
-        }
     };
 
     // Handle CSV download
@@ -352,15 +351,6 @@ export default function CampaignDetailPage() {
         }
     };
 
-    // Format date for display
-    const formatDate = (dateString: string) => {
-        return new Date(dateString).toLocaleDateString();
-    };
-
-    const formatDateTime = (dateString: string) => {
-        return new Date(dateString).toLocaleString();
-    };
-
     // Get badge variant for state
     const getStateBadgeVariant = (state: string) => {
         switch (state) {
@@ -410,7 +400,7 @@ export default function CampaignDetailPage() {
     const formatLogTimestamp = (ts: string) => {
         const d = new Date(ts);
         if (isNaN(d.getTime())) return ts;
-        return d.toLocaleString();
+        return formatDateTime(d, organizationTimezone);
     };
 
     // Render action button based on state
@@ -472,25 +462,25 @@ export default function CampaignDetailPage() {
 
     if (isLoadingCampaign) {
         return (
-            <div className="container mx-auto p-6 space-y-6">
+            <PageShell className="space-y-6">
                 <div className="animate-pulse">
                     <div className="h-8 bg-muted rounded w-1/4 mb-4"></div>
                     <div className="h-64 bg-muted rounded"></div>
                 </div>
-            </div>
+            </PageShell>
         );
     }
 
     if (!campaign) {
         return (
-            <div className="container mx-auto p-6 space-y-6">
+            <PageShell className="space-y-6">
                 <p className="text-center text-muted-foreground">Campaign not found</p>
-            </div>
+            </PageShell>
         );
     }
 
     return (
-        <div className="container mx-auto p-6 space-y-6">
+        <PageShell className="space-y-6">
             <div>
                 <Button
                     variant="ghost"
@@ -508,7 +498,7 @@ export default function CampaignDetailPage() {
                                     {campaign.state}
                                 </Badge>
                                 <span className="text-muted-foreground">
-                                    Created {formatDate(campaign.created_at)}
+                                    Created {formatDate(campaign.created_at, organizationTimezone)}
                                 </span>
                             </div>
                         </div>
@@ -597,6 +587,8 @@ export default function CampaignDetailPage() {
                     </div>
                 </div>
 
+                <CampaignTrafficStats campaign={campaign} />
+
                 {/* Campaign Details */}
                 <Card className="mb-6">
                     <CardHeader>
@@ -607,17 +599,6 @@ export default function CampaignDetailPage() {
                     </CardHeader>
                     <CardContent>
                         <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <dt className="text-sm font-medium">Workflow</dt>
-                                <dd className="mt-1">
-                                    <button
-                                        onClick={handleWorkflowClick}
-                                        className="text-blue-600 hover:text-blue-800 hover:underline"
-                                    >
-                                        {campaign.workflow_name}
-                                    </button>
-                                </dd>
-                            </div>
                             <div>
                                 <dt className="text-sm font-medium">Source Type</dt>
                                 <dd className="mt-1 capitalize">{campaign.source_type.replace('-', ' ')}</dd>
@@ -700,13 +681,17 @@ export default function CampaignDetailPage() {
                             {campaign.started_at && (
                                 <div>
                                     <dt className="text-sm font-medium">Started At</dt>
-                                    <dd className="mt-1">{formatDateTime(campaign.started_at)}</dd>
+                                    <dd className="mt-1">
+                                        {formatDateTime(campaign.started_at, organizationTimezone)}
+                                    </dd>
                                 </div>
                             )}
                             {campaign.completed_at && (
                                 <div>
                                     <dt className="text-sm font-medium">Completed At</dt>
-                                    <dd className="mt-1">{formatDateTime(campaign.completed_at)}</dd>
+                                    <dd className="mt-1">
+                                        {formatDateTime(campaign.completed_at, organizationTimezone)}
+                                    </dd>
                                 </div>
                             )}
                         </dl>
@@ -953,6 +938,6 @@ export default function CampaignDetailPage() {
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
-        </div>
+        </PageShell>
     );
 }

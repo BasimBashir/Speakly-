@@ -27,17 +27,21 @@ if SENTRY_DSN and (
 
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 
 from api.constants import REDIS_URL
+from api.errors.mps import MPS_UNAVAILABLE_PUBLIC_MESSAGE, MPSUnavailableError
 from api.mcp_server import mcp
 from api.routes.main import router as main_router
+from api.services.pipecat.recording_audio_cache import handle_recording_cache_sync
 from api.services.pipecat.tracing_config import (
     handle_langfuse_sync,
     load_all_org_langfuse_credentials,
 )
+from api.services.pipecat.tts_cache.runtime import close_speech_cache
 from api.services.worker_sync.manager import (
     WorkerSyncManager,
     set_worker_sync_manager,
@@ -65,6 +69,9 @@ async def lifespan(app: FastAPI):
         sync_manager.register(
             WorkerSyncEventType.LANGFUSE_CREDENTIALS, handle_langfuse_sync
         )
+        sync_manager.register(
+            WorkerSyncEventType.RECORDINGS, handle_recording_cache_sync
+        )
 
         from api.services.knowledge_base.org_index_cache import handle_kb_index_updated
 
@@ -75,11 +82,39 @@ async def lifespan(app: FastAPI):
         await sync_manager.start()
         set_worker_sync_manager(sync_manager)
 
-        yield  # Run app
+        from api.services.observability import loop_exceptions, loop_lag, metrics
+        from api.services.observability.call_events import (
+            delivery as call_event_delivery,
+        )
 
-        # Shutdown sequence - this runs when FastAPI is shutting down
-        logger.info("Starting graceful shutdown...")
-        await sync_manager.stop()
+        call_event_delivery.start()
+
+        # Event-loop lag gauge — per-pod saturation signal read off
+        # /health/active-calls during autoscaling load tests.
+        metrics.start()
+        loop_lag.start()
+        # Routes exceptions that escape tasks and timer callbacks; demotes one
+        # known aioice teardown race and leaves everything else at ERROR.
+        loop_exceptions.install()
+
+        try:
+            yield  # Run app
+        finally:
+            logger.info("Starting graceful shutdown...")
+            from api.services.workflow.text_chat_stream import (
+                finish_streaming_text_chat_turns,
+            )
+
+            await finish_streaming_text_chat_turns()
+            await call_event_delivery.shutdown()
+            try:
+                await sync_manager.stop()
+            finally:
+                try:
+                    await close_speech_cache()
+                finally:
+                    await loop_lag.stop()
+                    metrics.stop()
 
 
 app = FastAPI(
@@ -93,6 +128,19 @@ app = FastAPI(
         {"url": "http://localhost:8000", "description": "Local development"},
     ],
 )
+
+
+@app.exception_handler(MPSUnavailableError)
+async def handle_mps_unavailable_error(
+    _request: Request,
+    _exc: MPSUnavailableError,
+) -> JSONResponse:
+    """Tell callers this is a Dograh outage, not invalid customer config."""
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": MPS_UNAVAILABLE_PUBLIC_MESSAGE},
+    )
 
 
 # Configure CORS.
@@ -122,6 +170,7 @@ app.add_middleware(
     allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Workflow-Run-Id"],
 )
 
 

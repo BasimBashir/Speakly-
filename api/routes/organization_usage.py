@@ -1,21 +1,78 @@
+import asyncio
 import json
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Literal, Optional
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Annotated, Any, Dict, List, Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 
 from api.constants import DEPLOYMENT_MODE, UI_APP_URL
 from api.db import db_client
 from api.db.models import UserModel
 from api.services.auth.depends import get_user, get_user_with_selected_organization
+from api.services.call_concurrency import call_concurrency
 from api.services.mps_service_key_client import mps_service_key_client
 from api.services.reports import generate_usage_runs_report_csv
 from api.utils.artifacts import artifact_url
+from api.utils.recording_artifacts import has_recording_track
 
 router = APIRouter(prefix="/organizations")
+
+
+class OrganizationConcurrentCallsResponse(BaseModel):
+    organization_id: int
+    active_calls: int = Field(
+        ge=0,
+        description=(
+            "Occupied concurrent call slots across all workers, including "
+            "dialing/ringing reservations. Excludes expired slots."
+        ),
+    )
+
+
+@router.get(
+    "/concurrent-calls",
+    response_model=OrganizationConcurrentCallsResponse,
+    responses={
+        401: {"description": "Missing or invalid credentials"},
+        503: {"description": "The current call count is unavailable"},
+    },
+)
+async def get_organization_concurrent_calls(
+    response: Response,
+    user: Annotated[UserModel, Depends(get_user_with_selected_organization)],
+) -> OrganizationConcurrentCallsResponse:
+    """Get your organization's current concurrent call count across all workers.
+
+    Authenticate with X-API-Key; the key determines the organization. Session
+    authentication also works for the user's selected organization. Counts
+    occupied call slots, including dialing/ringing calls before media starts,
+    using the concurrency limiter's stale-slot expiry. This is a snapshot,
+    not a reservation of capacity for a future call.
+    """
+    organization_id = user.selected_organization_id
+    try:
+        async with asyncio.timeout(5):
+            active_calls = await call_concurrency.get_org_active_calls(organization_id)
+    except (RedisError, OSError):
+        logger.exception(
+            "Organization call count unavailable for org {}", organization_id
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Concurrent call count unavailable",
+            headers={"Cache-Control": "no-store"},
+        ) from None
+
+    response.headers["Cache-Control"] = "no-store"
+    return OrganizationConcurrentCallsResponse(
+        organization_id=organization_id, active_calls=active_calls
+    )
 
 
 class CurrentUsageResponse(BaseModel):
@@ -26,12 +83,6 @@ class CurrentUsageResponse(BaseModel):
     used_amount_usd: Optional[float] = None
     currency: Optional[str] = None
     price_per_second_usd: Optional[float] = None
-
-
-class MPSCreditsResponse(BaseModel):
-    total_credits_used: float
-    remaining_credits: float
-    total_quota: float
 
 
 class MPSCreditPurchaseUrlResponse(BaseModel):
@@ -68,7 +119,6 @@ class MPSCreditLedgerEntryResponse(BaseModel):
 
 
 class MPSBillingCreditsResponse(BaseModel):
-    billing_version: Literal["legacy", "v2"]
     total_credits_used: float = 0.0
     remaining_credits: float = 0.0
     total_quota: float = 0.0
@@ -99,8 +149,12 @@ class WorkflowRunUsageResponse(BaseModel):
     call_duration_seconds: int
     recording_url: Optional[str] = None
     transcript_url: Optional[str] = None
+    user_recording_url: Optional[str] = None
+    bot_recording_url: Optional[str] = None
     recording_public_url: Optional[str] = None
     transcript_public_url: Optional[str] = None
+    user_recording_public_url: Optional[str] = None
+    bot_recording_public_url: Optional[str] = None
     public_access_token: Optional[str] = None
     phone_number: Optional[str] = Field(
         default=None,
@@ -157,69 +211,13 @@ async def get_current_period_usage(user: UserModel = Depends(get_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/usage/mps-credits", response_model=MPSCreditsResponse)
-async def get_mps_credits(user: UserModel = Depends(get_user)):
-    """Get aggregated usage and quota from MPS.
-
-    OSS users: queries by provider_id (created_by).
-    Hosted users: queries by organization_id.
-    """
-    try:
-        if DEPLOYMENT_MODE == "oss":
-            usage = await mps_service_key_client.get_usage_by_created_by(
-                str(user.provider_id)
-            )
-        else:
-            if not user.selected_organization_id:
-                raise HTTPException(status_code=400, detail="No organization selected")
-            usage = await mps_service_key_client.get_usage_by_organization(
-                user.selected_organization_id
-            )
-
-        total_used = usage.get("total_credits_used", 0.0)
-        total_remaining = usage.get("remaining_credits", 0.0)
-
-        return MPSCreditsResponse(
-            total_credits_used=total_used,
-            remaining_credits=total_remaining,
-            total_quota=total_used + total_remaining,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to fetch MPS credits: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _get_mps_billing_account_status(
-    user: UserModel, organization_id: int
-) -> Optional[dict]:
-    return await mps_service_key_client.get_billing_account_status(
-        organization_id=organization_id,
-        created_by=str(user.provider_id),
-    )
-
-
-def _is_mps_billing_v2(account: Optional[dict]) -> bool:
-    return bool(account and account.get("billing_mode") == "v2")
-
-
-async def _legacy_mps_credits_response(user: UserModel) -> MPSBillingCreditsResponse:
-    if DEPLOYMENT_MODE == "oss":
-        usage = await mps_service_key_client.get_usage_by_created_by(
-            str(user.provider_id)
-        )
-    else:
-        if not user.selected_organization_id:
-            raise HTTPException(status_code=400, detail="No organization selected")
-        usage = await mps_service_key_client.get_usage_by_organization(
-            user.selected_organization_id
-        )
+async def _oss_mps_credits_response(user: UserModel) -> MPSBillingCreditsResponse:
+    """Aggregate per-key MPS credits for OSS deployments (no billing account)."""
+    usage = await mps_service_key_client.get_usage_by_created_by(str(user.provider_id))
 
     total_used = float(usage.get("total_credits_used", 0.0))
     total_remaining = float(usage.get("remaining_credits", 0.0))
     return MPSBillingCreditsResponse(
-        billing_version="legacy",
         total_credits_used=total_used,
         remaining_credits=total_remaining,
         total_quota=total_used + total_remaining,
@@ -231,22 +229,71 @@ async def get_billing_credits(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     user: UserModel = Depends(get_user),
+    entry_type: Annotated[
+        Literal["credit", "purchase", "debit", "grant", "additional_credit"] | None,
+        Query(
+            description="Entry type; credit includes purchases, grants, and additional credits"
+        ),
+    ] = None,
+    start_date: Annotated[
+        date | None, Query(description="Inclusive calendar date in timezone")
+    ] = None,
+    end_date: Annotated[
+        date | None, Query(description="Inclusive calendar date in timezone")
+    ] = None,
+    timezone: Annotated[
+        str, Query(description="IANA timezone for the selected calendar dates")
+    ] = "UTC",
 ):
-    """Return legacy MPS credits or paginated v2 billing ledger details for the org."""
+    """Return per-key MPS credits (OSS) or the org's paginated billing ledger."""
     try:
-        if DEPLOYMENT_MODE == "oss" or not user.selected_organization_id:
-            return await _legacy_mps_credits_response(user)
+        if DEPLOYMENT_MODE == "oss":
+            return await _oss_mps_credits_response(user)
+
+        if not user.selected_organization_id:
+            raise HTTPException(status_code=400, detail="No organization selected")
+
+        if start_date is not None and end_date is not None and start_date > end_date:
+            raise HTTPException(
+                status_code=422, detail="start_date must not follow end_date"
+            )
+        try:
+            zone = ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError):
+            # Some browsers report deprecated IANA aliases (e.g. "Asia/Calcutta")
+            # or otherwise unresolvable names. Degrade to UTC instead of failing
+            # the whole billing page.
+            logger.warning(
+                f"Unresolvable billing timezone {timezone!r}; falling back to UTC"
+            )
+            zone = UTC
+        try:
+            start_at = (
+                datetime.combine(start_date, time.min, zone).astimezone(UTC)
+                if start_date is not None
+                else None
+            )
+            end_at = (
+                datetime.combine(
+                    end_date + timedelta(days=1), time.min, zone
+                ).astimezone(UTC)
+                if end_date is not None
+                else None
+            )
+        except (ValueError, OverflowError):
+            raise HTTPException(
+                status_code=422, detail="Invalid billing date range"
+            ) from None
 
         organization_id = user.selected_organization_id
-        account_status = await _get_mps_billing_account_status(user, organization_id)
-        if not _is_mps_billing_v2(account_status):
-            return await _legacy_mps_credits_response(user)
-
         ledger = await mps_service_key_client.get_credit_ledger(
             organization_id=organization_id,
             page=page,
             limit=limit,
             created_by=str(user.provider_id),
+            entry_type=entry_type,
+            start_date=start_at,
+            end_date=end_at,
         )
         account = ledger.get("account") or {}
         ledger_entries = ledger.get("ledger_entries") or []
@@ -282,13 +329,12 @@ async def get_billing_credits(
             total_debits = float(ledger["total_debits_credits"])
 
         return MPSBillingCreditsResponse(
-            billing_version="v2",
             total_credits_used=total_debits,
             remaining_credits=balance,
             total_quota=balance + total_debits,
             account=MPSBillingAccountResponse(
                 id=int(account["id"]),
-                organization_id=int(account["organization_id"]),
+                organization_id=organization_id,
                 billing_mode=str(account["billing_mode"]),
                 cached_balance_credits=balance,
                 currency=str(account.get("currency") or "USD"),
@@ -308,14 +354,18 @@ async def get_billing_credits(
                     aggregation_key=entry.get("aggregation_key"),
                     usage_event_id=_optional_int(entry.get("usage_event_id")),
                     workflow_run_id=_optional_int(entry.get("workflow_run_id")),
-                    workflow_id=workflow_ids_by_run_id.get(
-                        _optional_int(entry.get("workflow_run_id"))
-                    )
-                    if entry.get("workflow_run_id") is not None
-                    else None,
-                    billable_quantity=float(entry["billable_quantity"])
-                    if entry.get("billable_quantity") is not None
-                    else None,
+                    workflow_id=(
+                        workflow_ids_by_run_id.get(
+                            _optional_int(entry.get("workflow_run_id"))
+                        )
+                        if entry.get("workflow_run_id") is not None
+                        else None
+                    ),
+                    billable_quantity=(
+                        float(entry["billable_quantity"])
+                        if entry.get("billable_quantity") is not None
+                        else None
+                    ),
                     quantity_unit=entry.get("quantity_unit"),
                     metadata=entry.get("metadata") or {},
                     created_at=str(entry["created_at"]),
@@ -341,7 +391,7 @@ async def get_billing_credits(
 async def create_mps_credit_purchase_url(
     user: UserModel = Depends(get_user_with_selected_organization),
 ):
-    """Create a checkout URL for organizations using Dograh-managed MPS v2."""
+    """Create a checkout URL for purchasing organization credits."""
     if DEPLOYMENT_MODE == "oss":
         raise HTTPException(
             status_code=404,
@@ -350,14 +400,6 @@ async def create_mps_credit_purchase_url(
 
     organization_id = user.selected_organization_id
     assert organization_id is not None
-    account_status = await _get_mps_billing_account_status(user, organization_id)
-    if not _is_mps_billing_v2(account_status):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Credit purchases are available only for organizations using billing v2"
-            ),
-        )
 
     try:
         session = await mps_service_key_client.create_credit_purchase_url(
@@ -387,6 +429,87 @@ async def create_mps_credit_purchase_url(
     return MPSCreditPurchaseUrlResponse(checkout_url=checkout_url)
 
 
+class BillingPaymentResponse(BaseModel):
+    payment_order_id: int
+    paid_at: str
+    amount_minor: int
+    currency: str
+    gateway_payment_id: Optional[str] = None
+    invoice_number: Optional[str] = None
+    invoice_status: Literal["issued", "pending", "unavailable"]
+
+
+class BillingPaymentsResponse(BaseModel):
+    payments: List[BillingPaymentResponse]
+
+
+@router.get("/billing/payments", response_model=BillingPaymentsResponse)
+async def get_billing_payments(user: UserModel = Depends(get_user)):
+    """Paid credit top-ups, newest first, each with its tax invoice if any."""
+    if DEPLOYMENT_MODE == "oss":
+        raise HTTPException(
+            status_code=404, detail="Payments are not available in OSS mode"
+        )
+    organization_id = user.selected_organization_id
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="No organization selected")
+
+    try:
+        result = await mps_service_key_client.list_payments(
+            organization_id=organization_id, created_by=str(user.provider_id)
+        )
+        return BillingPaymentsResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to list payments for org {organization_id}: {exc}")
+        raise HTTPException(status_code=502, detail="Could not load payments")
+
+
+@router.get(
+    "/billing/invoices/{payment_order_id}/pdf",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+async def download_billing_invoice(
+    payment_order_id: int, user: UserModel = Depends(get_user)
+):
+    """Download a paid credit top-up's tax invoice as a PDF."""
+    if DEPLOYMENT_MODE == "oss":
+        raise HTTPException(
+            status_code=404, detail="Invoices are not available in OSS mode"
+        )
+    organization_id = user.selected_organization_id
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="No organization selected")
+
+    try:
+        mps_response = await mps_service_key_client.get_invoice_pdf(
+            organization_id=organization_id,
+            payment_order_id=payment_order_id,
+            created_by=str(user.provider_id),
+        )
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        logger.error(f"Failed to fetch invoice for order {payment_order_id}: {exc}")
+        raise HTTPException(status_code=502, detail="Could not download invoice")
+    except Exception as exc:
+        logger.error(f"Failed to fetch invoice for order {payment_order_id}: {exc}")
+        raise HTTPException(status_code=502, detail="Could not download invoice")
+    return Response(
+        content=mps_response.content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": mps_response.headers.get(
+                "content-disposition", 'attachment; filename="invoice.pdf"'
+            )
+        },
+    )
+
+
 FILTERS_DESCRIPTION = """\
 JSON-encoded array of filter objects. Each object has the shape:
 
@@ -405,6 +528,8 @@ Supported `attribute` / `type` / `value` combinations:
 | `calledNumber`  | `text`        | `{ "value": "9911848" }`                     | substring match on `initial_context.called_number`   |
 | `dispositionCode` | `multiSelect` | `{ "codes": ["XFER", "DNC"] }`             | any of the codes in `gathered_context.mapped_call_disposition` |
 | `duration`      | `numberRange` | `{ "min": 60, "max": 300 }`                  | call duration (seconds), inclusive bounds            |
+| `callDirection` | `radio`       | `{ "status": "inbound" }`                    | `inbound` or `outbound`; any other value matches all |
+| `callChannel`   | `radio`       | `{ "status": "telephony" }`                  | `telephony`, `web`, or `chat` — the group of run modes for that channel |
 
 Unknown attributes and unsupported `type` values are silently ignored.
 
@@ -435,6 +560,16 @@ async def get_usage_history(
             '{"attribute":"duration","type":"numberRange","value":{"min":60,"max":300}}]',
             '[{"attribute":"dispositionCode","type":"multiSelect","value":{"codes":["XFER","DNC"]}}]',
         ],
+    ),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Field to sort by ('duration'). Defaults to `created_at`.",
+        examples=["duration"],
+    ),
+    sort_order: str = Query(
+        "desc",
+        description="Sort order ('asc' or 'desc').",
+        pattern="^(asc|desc)$",
     ),
     user: UserModel = Depends(get_user),
 ):
@@ -468,6 +603,8 @@ async def get_usage_history(
             limit=limit,
             offset=offset,
             filters=parsed_filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
         total_pages = (total_count + limit - 1) // limit
@@ -478,6 +615,17 @@ async def get_usage_history(
                 public_access_token, "transcript"
             )
             run["recording_public_url"] = artifact_url(public_access_token, "recording")
+            run["user_recording_public_url"] = (
+                artifact_url(public_access_token, "user_recording")
+                if has_recording_track(run.get("extra"), "user")
+                else None
+            )
+            run["bot_recording_public_url"] = (
+                artifact_url(public_access_token, "bot_recording")
+                if has_recording_track(run.get("extra"), "bot")
+                else None
+            )
+            run.pop("extra", None)
 
         return {
             "runs": runs,
@@ -565,7 +713,6 @@ async def get_daily_usage_breakdown(
             start_date,
             end_date,
             org.price_per_second_usd,
-            user_id=user.id,
         )
 
         return breakdown

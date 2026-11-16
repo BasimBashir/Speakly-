@@ -1,6 +1,6 @@
 'use client';
 
-import { FileText, Info, Loader2, Sparkles, Upload, X } from 'lucide-react';
+import { FileText, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -23,15 +23,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { useAppConfig } from '@/context/AppConfigContext';
 import logger from '@/lib/logger';
+
+import ExternalProcessingNotice from './ExternalProcessingNotice';
 
 interface DocumentUploadProps {
   onUploadSuccess: () => void;
 }
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-const ACCEPTED_FILE_TYPES = ['.pdf', '.docx', '.doc', '.txt', '.json'];
+const ACCEPTED_FILE_TYPES = ['.pdf', '.docx', '.doc', '.txt', '.json', '.md'];
 
 const DOC_TYPE_OPTIONS = [
   { value: 'contract', label: 'Contract' },
@@ -45,8 +46,6 @@ const DOC_TYPE_OPTIONS = [
 const MIN_DESCRIPTION_LENGTH = 20;
 
 export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps) {
-  const { config } = useAppConfig();
-  const isOSS = config?.deploymentMode === 'oss';
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [retrievalMode, setRetrievalMode] = useState<string>('full_document');
   const [docType, setDocType] = useState<string>('');
@@ -65,20 +64,6 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
   const intendedUseSelected = intendedUse.inbound || intendedUse.outbound;
   const descriptionValid = userDescription.trim().length >= MIN_DESCRIPTION_LENGTH;
   const formComplete = selectedFile && docType && intendedUseSelected && descriptionValid;
-
-  const ossNotice = isOSS ? (
-    <div className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/30">
-      <Info className="h-4 w-4 flex-shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" />
-      <div className="text-xs text-emerald-900 dark:text-emerald-200">
-        <p className="font-medium">Parsed locally on your server</p>
-        <p className="mt-1">
-          Uploaded documents are parsed and chunked locally on your self-hosted
-          server. Nothing is sent to any external service - the extracted text and
-          embeddings are stored only in your own database.
-        </p>
-      </div>
-    </div>
-  ) : null;
 
   const validateFile = (file: File): boolean => {
     const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
@@ -265,7 +250,7 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
   if (selectedFile && !uploading) {
     return (
       <div className="space-y-4">
-        {ossNotice}
+        <ExternalProcessingNotice />
         {/* Selected file info */}
         <div className="flex items-center gap-3 p-3 border rounded-lg bg-muted/30">
           <FileText className="w-8 h-8 text-primary flex-shrink-0" />
@@ -421,7 +406,7 @@ export default function DocumentUpload({ onUploadSuccess }: DocumentUploadProps)
 
   return (
     <div className="space-y-4">
-      {ossNotice}
+      <ExternalProcessingNotice />
       <input
         ref={fileInputRef}
         type="file"

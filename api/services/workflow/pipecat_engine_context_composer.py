@@ -5,6 +5,7 @@ reusable functions. Defines recording response mode markers and instructions.
 """
 
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 from typing import Optional as _Optional
 
@@ -103,6 +104,12 @@ def _direction_filter_text(md: str, direction: str) -> str:
     return "\n".join(out)
 
 
+@dataclass(frozen=True)
+class ComposedNodePrompt:
+    text: str
+    recording_enabled: bool
+
+
 async def compose_system_prompt_for_node(
     *,
     node: "Node",
@@ -112,21 +119,20 @@ async def compose_system_prompt_for_node(
     organization_id: _Optional[int] = None,
     call_direction: _Optional[str] = None,
     conversation_language: _Optional[str] = None,
-) -> str:
+) -> ComposedNodePrompt:
     """Compose the full system prompt text for a workflow node.
 
-    Combines the global prompt, node-specific prompt, and (when recordings
-    are enabled anywhere in the workflow) the recording response mode
-    instructions into a single string.
+    Combines the global prompt, node-specific prompt, and recording response
+    mode instructions. Returns the same recording-mode decision for the router.
 
     Args:
         node: The workflow node to compose the prompt for.
         workflow: The full workflow graph (needed for global node prompt).
         format_prompt: Callable to render template variables in prompts.
-        has_recordings: Whether any node in the workflow uses recordings.
+        has_recordings: Whether the organization has active recordings.
 
     Returns:
-        The composed system prompt text.
+        The composed text and whether this node uses recording response mode.
     """
     global_prompt = ""
     if workflow.global_node_id and node.add_global_prompt:
@@ -145,7 +151,8 @@ async def compose_system_prompt_for_node(
     if reply_instruction:
         parts.append(reply_instruction)
 
-    if has_recordings and "RECORDING_ID:" in formatted_node_prompt:
+    recording_enabled = has_recordings and "RECORDING_ID:" in formatted_node_prompt
+    if recording_enabled:
         parts.append(RECORDING_RESPONSE_MODE_INSTRUCTIONS)
 
     # Only inject the <organization_knowledge> block on nodes where the
@@ -154,7 +161,7 @@ async def compose_system_prompt_for_node(
     # to call a tool that isn't in its tool list, and the model hallucinates
     # the call -- producing a "function not currently available" reply that
     # the user sees as "I don't have access to that information." See
-    # pipecat_engine.py:521 for the matching tool-registration gate.
+    # PipecatEngine._prepare_node for the matching tool-registration gate.
     if organization_id is not None and node.document_uuids:
         include_index = getattr(node, "include_kb_index", True)
         kb_section = await compose_kb_index_section(
@@ -165,7 +172,9 @@ async def compose_system_prompt_for_node(
         if kb_section:
             parts.append(kb_section)
 
-    return "\n\n".join(parts)
+    return ComposedNodePrompt(
+        text="\n\n".join(parts), recording_enabled=recording_enabled
+    )
 
 
 async def compose_functions_for_node(

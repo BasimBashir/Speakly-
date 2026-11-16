@@ -18,6 +18,8 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import { useOrganizationTimezone } from "@/hooks/useOrganizationTimezone";
+import { formatDateTime } from "@/lib/dateTime";
 import { ActiveFilter, FilterAttribute } from "@/types/filters";
 
 export interface WorkflowRunsTableProps {
@@ -56,6 +58,7 @@ export interface WorkflowRunsTableProps {
     title?: string;
     subtitle?: string;
     showFilters?: boolean;
+    showAgentVersion?: boolean;
     emptyMessage?: string;
 }
 
@@ -77,22 +80,21 @@ export function WorkflowRunsTable({
     sortBy,
     sortOrder = 'desc',
     onSort,
-    workflowId,
     onReload,
     title = "Workflow Run History",
     subtitle,
     showFilters = true,
+    showAgentVersion = false,
     emptyMessage = "No workflow runs found",
 }: WorkflowRunsTableProps) {
     const [selectedRowId, setSelectedRowId] = useState<number | null>(null);
+    const organizationTimezone = useOrganizationTimezone();
 
     // Media preview dialog
     const mediaPreview = MediaPreviewDialog();
 
-    const formatDate = (dateString: string) => new Date(dateString).toLocaleString();
-
-    const handleRowClick = (runId: number) => {
-        window.open(`/workflow/${workflowId}/run/${runId}`, '_blank');
+    const handleRowClick = (run: WorkflowRunResponseSchema) => {
+        window.open(`/workflow/${run.workflow_id}/run/${run.id}`, '_blank');
     };
 
     return (
@@ -155,6 +157,7 @@ export function WorkflowRunsTable({
                                 <TableHeader>
                                     <TableRow className="bg-muted/50">
                                         <TableHead className="font-semibold">ID</TableHead>
+                                        {showAgentVersion && <TableHead>Agent / version</TableHead>}
                                         <TableHead className="font-semibold">Status</TableHead>
                                         <TableHead className="font-semibold">Created At</TableHead>
                                         <TableHead className="font-semibold">Call Type</TableHead>
@@ -180,15 +183,18 @@ export function WorkflowRunsTable({
                                         <TableRow
                                             key={run.id}
                                             className={`cursor-pointer hover:bg-muted/50 ${selectedRowId === run.id ? "bg-primary/20 ring-1 ring-primary/50" : ""}`}
-                                            onClick={() => handleRowClick(run.id)}
+                                            onClick={() => handleRowClick(run)}
                                         >
                                             <TableCell className="font-mono text-sm">#{run.id}</TableCell>
+                                            {showAgentVersion && <TableCell><div>{run.workflow_name ?? `Agent #${run.workflow_id}`}</div><div className="text-xs text-muted-foreground">{run.version_number != null ? `Version ${run.version_number}` : run.definition_id != null ? `Definition #${run.definition_id}` : 'Unversioned'}</div></TableCell>}
                                             <TableCell>
                                                 <Badge variant={run.is_completed ? "default" : "secondary"}>
                                                     {run.is_completed ? "Completed" : "In Progress"}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell className="text-sm">{formatDate(run.created_at)}</TableCell>
+                                            <TableCell className="text-sm">
+                                                {formatDateTime(run.created_at, organizationTimezone)}
+                                            </TableCell>
                                             <TableCell>
                                                 <CallTypeCell mode={run.mode} callType={run.call_type} />
                                             </TableCell>
@@ -218,7 +224,7 @@ export function WorkflowRunsTable({
                                                     <Button
                                                         variant="outline"
                                                         size="icon"
-                                                        onClick={() => window.open(`/workflow/${workflowId}/run/${run.id}`, '_blank')}
+                                                        onClick={() => window.open(`/workflow/${run.workflow_id}/run/${run.id}`, '_blank')}
                                                     >
                                                         <ExternalLink className="h-4 w-4" />
                                                     </Button>

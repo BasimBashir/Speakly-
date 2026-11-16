@@ -10,6 +10,21 @@ import aiohttp
 from loguru import logger
 from pipecat.serializers.call_strategies import HangupStrategy, TransferStrategy
 
+from api.errors.failure import (
+    DograhFailure,
+    ErrorSource,
+    ErrorType,
+    classify_exception,
+    classify_http_response,
+    log_failure,
+)
+from api.services.telephony.providers.twilio.introduction import introduction_urls
+from api.services.telephony.transfer_event_protocol import (
+    TransferEvent,
+    TransferEventType,
+)
+from api.utils.common import get_backend_endpoints
+
 
 class TwilioConferenceStrategy(TransferStrategy):
     """Implements conference-based call transfer for Twilio.
@@ -20,6 +35,7 @@ class TwilioConferenceStrategy(TransferStrategy):
 
     async def execute_transfer(self, context: Dict[str, Any]) -> bool:
         """Execute conference transfer for Twilio call."""
+        transfer_context = None
         try:
             account_sid = context["account_sid"]
             auth_token = context["auth_token"]
@@ -56,16 +72,18 @@ class TwilioConferenceStrategy(TransferStrategy):
         <Conference endConferenceOnExit="true">{conference_name}</Conference>
     </Dial>
 </Response>"""
+            data = {"Twiml": twiml}
+            if transfer_context.introduction_audio_url:
+                backend, _ = await get_backend_endpoints()
+                data = introduction_urls(backend, transfer_context.transfer_id)
 
-            logger.debug(
+            logger.info(
                 f"[Twilio Transfer] Transferring call to conference: {conference_name}"
             )
 
             # 2. Make the POST request to transfer the call
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    endpoint, auth=auth, data={"Twiml": twiml}
-                ) as response:
+                async with session.post(endpoint, auth=auth, data=data) as response:
                     response_text = await response.text()
 
                     if response.status == 200:
@@ -75,33 +93,59 @@ class TwilioConferenceStrategy(TransferStrategy):
                         )
 
                         # 3. Clean up transfer context after successful transfer
-                        await self._cleanup_transfer_context(
-                            transfer_context.transfer_id
-                        )
+                        if not transfer_context.introduction_audio_url:
+                            await self._cleanup_transfer_context(
+                                transfer_context.transfer_id
+                            )
+                        # Introduction URLs and hangup callbacks still need
+                        # context after the call is redirected. It expires by TTL.
                         return True
                     elif response.status == 404:
                         logger.error(
                             f"Failed to transfer Twilio call {call_sid}: Call not found (404)"
                         )
-                        await self._cleanup_transfer_context(
-                            transfer_context.transfer_id
-                        )
+                        await self._abort_transfer(transfer_context, context)
                         return False
                     else:
                         logger.error(
                             f"Failed to transfer Twilio call {call_sid} to conference {conference_name}: "
                             f"Status {response.status}, Response: {response_text}"
                         )
-                        await self._cleanup_transfer_context(
-                            transfer_context.transfer_id
-                        )
+                        await self._abort_transfer(transfer_context, context)
                         return False
 
         except Exception as e:
             logger.error(f"Failed to transfer Twilio call: {e}")
             if transfer_context:
-                await self._cleanup_transfer_context(transfer_context.transfer_id)
+                await self._abort_transfer(transfer_context, context)
             return False
+
+    async def _abort_transfer(self, transfer, context):
+        if not transfer.introduction_audio_url:
+            await self._cleanup_transfer_context(transfer.transfer_id)
+            return
+        from api.services.telephony.call_transfer_manager import (
+            get_call_transfer_manager,
+        )
+
+        manager = await get_call_transfer_manager()
+        await manager.publish_transfer_event(
+            TransferEvent(
+                type=TransferEventType.TRANSFER_FAILED,
+                transfer_id=transfer.transfer_id,
+                original_call_sid=transfer.original_call_sid,
+                status="failed",
+                action="transfer_failed",
+                reason="caller_redirect_failed",
+            )
+        )
+        if transfer.call_sid:
+            await TwilioHangupStrategy().execute_hangup(
+                {
+                    **context,
+                    "call_sid": transfer.call_sid,
+                }
+            )
 
     async def _find_transfer_context_for_call(self, call_sid: str):
         """Find the active transfer context for this call."""
@@ -136,15 +180,47 @@ class TwilioHangupStrategy(HangupStrategy):
     async def execute_hangup(self, context: Dict[str, Any]) -> bool:
         """Hang up the Twilio call via REST API."""
         try:
-            account_sid = context["account_sid"]
-            auth_token = context["auth_token"]
-            call_sid = context["call_sid"]
+            account_sid = context.get("account_sid")
+            auth_token = context.get("auth_token")
+            call_sid = context.get("call_sid")
             region = context.get("region")
             edge = context.get("edge")
 
-            if not account_sid or not auth_token or not call_sid:
-                logger.warning(
-                    "Cannot hang up Twilio call: missing required credentials or call_sid"
+            if not account_sid or not auth_token:
+                log_failure(
+                    DograhFailure(
+                        source=ErrorSource.TELEPHONY,
+                        type=ErrorType.CONFIG_ERROR,
+                        code="twilio-missing-hangup-credentials",
+                        internal_message="Cannot hang up Twilio call: missing required Twilio credentials",
+                        external_message="Check the Twilio credentials configured for this call.",
+                        provider="twilio",
+                        error_owner="user",
+                        retryable=False,
+                    ),
+                    operation="hang up call",
+                )
+                return False
+
+            if not call_sid:
+                log_failure(
+                    DograhFailure(
+                        source=ErrorSource.TELEPHONY,
+                        type=ErrorType.SYSTEM_ERROR,
+                        code="twilio-missing-call-sid",
+                        internal_message=(
+                            "Cannot hang up Twilio call: call SID is missing from "
+                            "runtime call context"
+                        ),
+                        external_message=(
+                            "Dograh could not identify the active Twilio call. Please "
+                            "retry or contact support if the problem continues."
+                        ),
+                        provider="twilio",
+                        error_owner="operator",
+                        retryable=False,
+                    ),
+                    operation="hang up call",
                 )
                 return False
 
@@ -166,12 +242,27 @@ class TwilioHangupStrategy(HangupStrategy):
                         return True
                     else:
                         response_text = await response.text()
-                        logger.error(
-                            f"Failed to terminate Twilio call {call_sid}: "
-                            f"Status {response.status}, Response: {response_text}"
+                        log_failure(
+                            classify_http_response(
+                                response.status,
+                                f"Twilio hangup returned HTTP {response.status}: "
+                                f"{response_text}",
+                                source=ErrorSource.TELEPHONY,
+                                provider="twilio",
+                                error_owner="user",
+                            ),
+                            operation="hang up call",
                         )
                         return False
 
         except Exception as e:
-            logger.exception(f"Failed to hang up Twilio call: {e}")
+            log_failure(
+                classify_exception(
+                    e,
+                    source=ErrorSource.TELEPHONY,
+                    provider="twilio",
+                    error_owner="user",
+                ),
+                operation="hang up call",
+            )
             return False

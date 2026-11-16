@@ -1,187 +1,91 @@
 ---
 title: "Model Configurations"
-description: "Voice Agents need AI Models to work, like LLM (Large Language Model), TTS (Voice) and STT (Transcriber). You can use any of your faviourite providers with Dograh Platform to run your Voice Agent."
+description: "Connect provider accounts, save reusable model setups, and choose defaults or overrides for your agents."
 ---
 
-## How Model Configuration Works
+## Provider connections and model configurations
 
-Dograh uses a **two-level configuration system** for AI models:
+Use **Providers** in the sidebar to connect provider accounts, and **Models** to create named model configurations. Providers lists each added connection in its own row. You can connect multiple accounts for the same provider and reuse them across configurations.
 
-1. **Global configuration** — A single set of model settings (LLM, TTS, STT) that applies to **all agents** by default.
-2. **Agent-level overrides** — Optional per-agent settings that override the global configuration for specific services.
+| Item | What it contains |
+|------|------------------|
+| **Provider Connection** | A provider account's credentials and connection settings, such as an endpoint, cloud project, or region. |
+| **Named Model Configuration** | A reusable choice of connections and model settings, such as the LLM model, temperature, and TTS voice. |
+| **Organization Default** | The named setup agents inherit when they have no model override. |
 
-If no overrides are set for an agent, it uses the global configuration as-is.
+Connections and configurations belong to your organization. Dograh provisions an initial Dograh connection and default setup during signup. You can add more Dograh connections with different Service Keys, or connect external providers.
 
-<Note>
-Agent-level overrides are **selective** — you can override only the services you want to change. For example, you can override just the LLM provider for a specific agent while keeping the global TTS and STT settings. There is no need to reconfigure every service.
-</Note>
+When you upgrade an existing deployment, the database migration converts your organization's saved model settings into connections and an **Organization default** configuration, and gives each agent that had its own model settings a named configuration of its own. Agents without their own settings keep inheriting the default.
 
-## Global Configuration
+## Add a provider connection
 
-The global configuration is the default model setup shared across all your agents. Dograh ships with its own models by default — when you sign up on https://app.dograh.com or set up the platform on your self-hosted infrastructure, you get some Dograh model credits to start with.
+You need the credentials and any connection settings required by your provider. To create a Dograh Service Key, see [API Keys and Service Keys](api-keys#service-keys).
 
-To configure the global models, go to **Model Configurations** in your dashboard:
-- **Hosted:** `https://app.dograh.com/model-configurations`
-- **Self-hosted:** `http://localhost:3010/model-configurations`
+1. Open **Providers** in the sidebar and click **Add Provider** to open the connection editor page.
+2. Choose the provider and name the connection so you can distinguish its account or environment.
+3. Enter its credentials and any required connection settings, then save. Where key pools are supported, use **Add API Key** to enter each key in its own row.
 
-![Model Configuration](../images/service-configuration.png)
+Click **Edit** on a provider row to open its editor page. Use **All provider connections** to return to the list.
 
-From here you can configure each service:
+You choose which services use the connection when editing a named model configuration in **Models**.
 
-| Service | What it does |
-|---------|-------------|
-| **LLM** | The language model that generates responses (e.g., OpenAI GPT-4.1, Anthropic Claude) |
-| **TTS (Voice)** | The text-to-speech model that converts responses to spoken audio (e.g., ElevenLabs, Cartesia) |
-| **STT (Transcriber)** | The speech-to-text model that transcribes user speech (e.g., Deepgram, AssemblyAI) |
-| **Realtime** | A single speech-to-speech model that handles LLM, TTS, and STT in one (e.g., Gemini Live) |
+You can repeat these steps for multiple accounts at the same provider. Editing a connection lets you keep or replace configured credentials; saved secrets are not returned to the browser. Model settings reference the connection instead of copying its key.
 
-Select a provider from the dropdown and configure the API key, model, and any provider-specific settings. For Dograh's own models, see [Service Keys](api-keys) for instructions on creating Service Keys.
+Saving a new connection, replacing credentials, or changing connection settings runs the provider's available credential checks before saving. Every API key in a pool is checked. A rejected key leaves the existing connection unchanged. Renaming a connection does not repeat provider checks. The checks vary by provider; some validate field structure or token format rather than making a live request.
 
-## Agent-Level Model Overrides
+A provider's realtime and standard services may require separate connection types, even when they accept the same key. The available roles come from the provider definitions.
 
-You can override the global model configuration for any individual agent. This is useful when different agents have different requirements — for example, a customer support agent might use a faster, cheaper LLM while a sales agent uses a more capable one.
+## Create a named configuration
 
-### Configuring overrides
+1. Open **Models** in the sidebar, click **Add Configuration**, and give it a name.
+2. Choose **Realtime**, **Dograh**, or **BYOK** mode. In BYOK and Realtime, each service has its own tab where you select a provider connection. To connect a new account without leaving the page, choose **Add a provider** at the end of a provider list.
+3. Adjust the available settings, then save.
+4. Click **Make org default** on its row in **Named Model Configurations** if agents should inherit it. The current default has an **Org default** badge.
 
-1. Open the agent you want to customize.
-2. Go to **Settings** in the agent detail page.
-3. Select the **Model Overrides** tab.
-4. You will see tabs for each service: **LLM**, **Voice** (TTS), and **Transcriber** (STT).
-5. Toggle **Override** on for the service you want to change.
-6. Configure the provider, model, and other settings as needed.
-7. Save your changes.
+| Mode | Provider selection |
+|------|-------------------|
+| **Dograh** | One Dograh connection manages LLM, STT, TTS, and embeddings. You can select the LLM model and adjust temperature, voice, speed, language, and language hints. |
+| **BYOK** | Separate compatible external connections for LLM, STT/transcriber, and TTS/voice. |
+| **Realtime** | An external realtime speech-to-speech connection and a separate external LLM for tasks such as extraction and QA. |
 
-### Selective overrides
+In BYOK and Realtime modes, you can also select an external embedding connection on the **Embedding** tab. Its model must match the indexes of the knowledge-base documents you use. Changing the configuration does not rebuild existing indexes. Dograh mode manages embeddings automatically and has no separate embedding controls. Dograh connections are selected only through Dograh mode in the editor.
 
-Each service can be toggled independently. When an override is **off** for a service, the agent inherits the global setting for that service. When an override is **on**, the agent uses the override setting instead.
+Use **Duplicate** to create a variation, or **Copy UUID** to reference a saved configuration or connection from your API integration. Names are labels; UUIDs identify references.
 
-| LLM Override | TTS Override | STT Override | Result |
-|---|---|---|---|
-| Off | Off | Off | Agent uses global config for all services |
-| On | Off | Off | Agent uses custom LLM, global TTS and STT |
-| Off | On | Off | Agent uses global LLM and STT, custom TTS |
-| On | On | On | Agent uses custom config for all services |
+Creating, editing, and duplicating model configurations opens a dedicated page. Use **All model configurations** to return to the list. In Dograh mode, choose the managed tier under **LLM model**, and click **Voice** to browse, filter, and play voice samples before selecting **Use this voice**. For Dograh's Flux-supported languages and Deepgram Flux multilingual, select **Language hints** with the language checkboxes. Model and language dropdowns offer **Enter Custom Value** where the provider supports it.
 
-For example, if you only want to change the voice for a specific agent:
-1. Leave the LLM and Transcriber overrides **off**.
-2. Toggle the Voice override **on**.
-3. Select a different TTS provider or voice.
-4. The agent will use your custom voice while still using the global LLM and STT.
+In BYOK mode, ElevenLabs, Cartesia, and Deepgram voices load using the selected provider connection's saved API key. Rime uses its public voice catalog, and Sarvam offers model-specific speaker lists. Voice choices refresh when you change the connection, model, or language. If a catalog cannot load, you can retry or enter a voice ID manually.
 
-### Realtime mode override
+Saving a named model configuration checks its structure and supported settings without repeating provider credential checks. A run's final configuration is validated before billing and quota authorization.
 
-You can also switch an individual agent to use a **Realtime** provider (such as Gemini Live) even if the global configuration uses standard LLM + TTS + STT. Toggle the **Realtime** switch in the Model Overrides tab, then configure the realtime provider, model, and voice.
+For one run, all selected Dograh services must share a service key. You can keep multiple Dograh connections in the catalog and use them in different configurations.
 
-<Note>
-When an agent uses a Realtime provider, it replaces the separate TTS and STT services with a single speech-to-speech model. An **LLM** is still required alongside the Realtime model — it's used for out-of-band tasks like variable extraction and QA analysis, which the realtime service does not handle. Context compaction is not applicable in Realtime mode and is ignored if enabled.
-</Note>
+## Configure an individual agent
 
-## Gemini 3.1 Live
+1. Open the agent's **Settings** and its model configuration section.
+2. Inherit the organization default or select a named configuration.
+3. Save and publish the agent.
 
-Gemini 3.1 Live is Google's realtime multimodal API that handles both LLM and voice in a single model. Instead of configuring separate LLM, TTS, and STT services, Gemini Live acts as an all-in-one realtime provider — it processes speech input, generates a response, and speaks it back, all over a single streaming connection.
+Create and edit configurations in **Models**. For a variation, duplicate a named configuration there and select it in your workflow. Override individual fields such as temperature or voice through the API trigger for a single run.
 
-Dograh supports Gemini 3.1 Live as a **Realtime** provider. The default model is `gemini-3.1-flash-live-preview`.
+If an existing workflow has custom model settings, they remain in use until you explicitly select and save a named configuration or the organization default. Workflow settings show that existing override without offering individual field editing.
 
-### Available Voices
+A named selection follows edits to that configuration for future runs. A run that has already started keeps its saved settings and credential selection.
 
-You can choose from the following built-in voices:
+## Override a single run
 
-| Voice | Description |
-|-------|-------------|
-| Puck | Default voice |
-| Charon | — |
-| Kore | — |
-| Fenrir | — |
-| Aoede | — |
+The effective order is organization default, published workflow override (or draft for test calls), API trigger override, then pre-call data fetch override. The pre-call data fetch runs once the call is connected, so it can only change the services the agent owns: `llm`, `llm_fallback`, and `tts`. The mode, `stt`, `realtime`, and `embeddings` are fixed by the first three layers.
 
-### Getting a Gemini API Key
+An override can select a named configuration by UUID, select a provider connection for a service, or change a field such as temperature or voice. Selecting a different named configuration replaces earlier model-setting patches; that override's own explicit fields then apply. Changing to a connection for the same provider preserves model settings. Changing provider starts that service from the new provider's defaults plus your explicit settings.
 
-To use Gemini 3.1 Live with Dograh, you need a Google Gemini API key. Follow these steps:
+See [API Trigger](/voice-agent/api-trigger) for request examples and [Pre-call Data Fetch](/voice-agent/pre-call-data-fetch) for response examples. Overrides do not edit your saved configurations.
 
-1. Go to [Google AI Studio](https://aistudio.google.com/).
-2. Sign in with your Google account.
-3. Click on **Get API Key** in the left sidebar.
-4. Click **Create API Key**.
-5. Select an existing Google Cloud project or create a new one.
-6. Copy the generated API key and store it securely.
+## Archive unused setups
+
+Archive a named configuration or connection when you no longer need it. Dograh rejects archiving references still needed by a default, active configuration, workflow, or pending campaign. Change those references first. Started runs keep their resolved model settings and load the connection's current credentials. Credential updates replace the stored values; previous credentials are not retained.
+
+Expand **Archived** at the bottom of Models or Providers to see archived items and select **Restore** to use them again. Restoring preserves the item's UUID and settings without changing your org default. If a model configuration uses archived provider connections, restore those providers first. Archived items do not appear in configuration selectors.
 
 <Note>
-  The Gemini API key is different from a Google Cloud service account key. You specifically need a **Gemini API key** from Google AI Studio for use with Dograh.
-</Note>
-
-### Configuring Gemini 3.1 Live in Dograh
-
-1. Go to **Model Configurations** in your Dograh dashboard (`https://app.dograh.com/model-configurations` for hosted or `http://localhost:3010/model-configurations` for local).
-2. Under the **Realtime** section, select `google_realtime` as the provider.
-3. Paste your Gemini API key.
-4. Select the model (`gemini-3.1-flash-live-preview` is available by default, or you can enter a model name manually).
-5. Choose a voice from the dropdown (default is `Puck`).
-6. Select the language (currently `en` is supported).
-
-<Note>
-  When using a Realtime provider like Gemini Live, you do not need to configure separate TTS and STT services — the realtime model handles speech in and out. However, you **must** still configure an **LLM** under the LLM tab: it powers variable extraction and QA analysis, which the realtime service does not perform.
-</Note>
-
-## Gemini Live on Vertex AI
-
-If you want to run Gemini Live through your own Google Cloud project — for billing consolidation, VPC controls, regional residency, or enterprise IAM — Dograh also supports Gemini Live via **Vertex AI** as a separate provider (`google_vertex_realtime`). The default model is `google/gemini-live-2.5-flash-native-audio`.
-
-Unlike Google AI Studio (which uses a single Gemini API key), Vertex AI authenticates with a **service account** belonging to your Google Cloud project.
-
-### Prerequisites
-
-1. A Google Cloud project with billing enabled.
-2. The Vertex AI API enabled on that project:
-
-   ```bash
-   gcloud services enable aiplatform.googleapis.com --project=YOUR_PROJECT_ID
-   ```
-
-3. A service account with the **Vertex AI User** role (`roles/aiplatform.user`) on the project:
-
-   ```bash
-   gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-     --member="serviceAccount:YOUR_SA@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
-     --role="roles/aiplatform.user"
-   ```
-
-4. A **JSON** key for that service account (P12 keys are not supported).
-
-### Creating the service account key
-
-1. In the GCP Console, go to **IAM & Admin → Service Accounts**.
-2. Pick an existing service account (or create a new one).
-3. Open the **Keys** tab → **Add Key → Create new key**.
-4. Choose **JSON** as the key type and click **Create**.
-5. The key file will download to your computer — store it securely and treat it as a secret.
-
-<Note>
-  Always pick **JSON**, not P12. The Vertex AI client libraries used by Dograh only accept service-account JSON keys; P12 is a legacy format retained for older Google Workspace integrations.
-</Note>
-
-### Configuring Vertex AI Realtime in Dograh
-
-1. Go to **Model Configurations** in your Dograh dashboard.
-2. Enable the **Realtime** toggle.
-3. Under the **Realtime** section, select `google_vertex_realtime` as the provider.
-4. Fill in the fields:
-
-   | Field | What to put in |
-   |---|---|
-   | **Model** | Vertex publisher/model id, e.g. `google/gemini-live-2.5-flash-native-audio` |
-   | **Voice** | One of the built-in voices (Puck, Charon, Kore, Fenrir, Aoede) |
-   | **Language** | BCP-47 code (e.g. `en-US`) |
-   | **Project Id** | The `project_id` value from your service-account JSON |
-   | **Location** | GCP region where the model is available (e.g. `us-east4`) |
-   | **Credentials** | Paste the **entire contents** of the service-account JSON file |
-   | **API Key** | Leave blank — Vertex AI does not use API keys |
-
-5. Save the configuration.
-
-<Note>
-  Paste the whole JSON file into the **Credentials** field — including `private_key`, `client_email`, and all other entries. Don't try to extract individual fields. If `Credentials` is left blank, Dograh falls back to **Application Default Credentials (ADC)** from the host environment, which is useful when running Dograh on a GCP VM or GKE pod with an attached service account.
-</Note>
-
-<Note>
-  IAM changes can take up to ~60 seconds to propagate. If you see `Permission 'aiplatform.endpoints.predict' denied`, wait a minute and retry — or double-check that the role was granted to the same service account whose JSON you pasted.
+When you use external providers, Dograh sends the data required for the selected service, which can include prompts, conversation history, transcripts, audio, tool definitions and results, and request metadata. Provider data handling, retention, training, and regional hosting policies vary.
 </Note>

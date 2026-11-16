@@ -7,7 +7,6 @@ inline WebSocket media streaming.
 import base64
 import binascii
 import json
-import random
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -25,10 +24,12 @@ TELNYX_TIMESTAMP_TOLERANCE_SECONDS = 300
 TELNYX_PUBLIC_KEY_BYTES = 32
 TELNYX_SIGNATURE_BYTES = 64
 
-from api.enums import WorkflowRunMode
+from api.enums import TelephonyCallStatus, WorkflowRunMode
+from api.services.telephony import ws_auth
 from api.services.telephony.base import (
     CallInitiationResult,
     NormalizedInboundData,
+    ProviderPhoneNumberLookupError,
     ProviderSyncResult,
     TelephonyProvider,
 )
@@ -70,6 +71,7 @@ class TelnyxProvider(TelephonyProvider):
         self.connection_id = config.get("connection_id")
         self.webhook_public_key = config.get("webhook_public_key")
         self.from_numbers = config.get("from_numbers", [])
+        self.default_from_number = config.get("default_from_number")
 
         if isinstance(self.from_numbers, str):
             self.from_numbers = [self.from_numbers]
@@ -93,24 +95,29 @@ class TelnyxProvider(TelephonyProvider):
         if not self.validate_config():
             raise ValueError("Telnyx provider not properly configured")
 
-        if from_number is None:
-            from_number = random.choice(self.from_numbers)
+        from_number = self.select_from_number(from_number)
         logger.info(f"Selected phone number {from_number} for outbound call")
 
         backend_endpoint, wss_backend_endpoint = await get_backend_endpoints()
 
         # Build the WebSocket stream URL for inline audio streaming
         workflow_id = kwargs.get("workflow_id")
-        user_id = kwargs.get("user_id")
-        stream_url = (
-            f"{wss_backend_endpoint}/api/v1/telephony/ws"
-            f"/{workflow_id}/{user_id}/{workflow_run_id}"
+        organization_id = kwargs.get("organization_id")
+        stream_url = ws_auth.build_media_ws_url(
+            wss_backend_endpoint, workflow_id, organization_id, workflow_run_id
         )
 
-        # Build the webhook URL for status callbacks
+        # Build the webhook URL for status callbacks. When a capability-token
+        # secret is configured, append the HMAC token so the events route can
+        # authenticate the request before any database lookup. Telnyx
+        # preserves query strings on webhook POSTs (verified live), so the
+        # token survives the round trip.
         events_url = (
             f"{backend_endpoint}/api/v1/telephony/telnyx/events/{workflow_run_id}"
         )
+        events_token = ws_auth.mint_events_token(workflow_run_id)
+        if events_token:
+            events_url = f"{events_url}?token={events_token}"
 
         # stream_bidirectional_codec controls only the Dograh → Telnyx direction.
         # The Telnyx → Dograh direction follows the PSTN leg and is announced via
@@ -127,8 +134,12 @@ class TelnyxProvider(TelephonyProvider):
             "webhook_url_method": "POST",
         }
 
+        # Redacted: stream_url carries a bearer capability token.
         logger.info(
-            f"Telnyx dial payload: {json.dumps({k: v for k, v in payload.items() if k != 'connection_id'})}"
+            "Telnyx dial payload: "
+            + ws_auth.redact_token(
+                json.dumps({k: v for k, v in payload.items() if k != "connection_id"})
+            )
         )
 
         endpoint = f"{self.TELNYX_API_BASE}/calls"
@@ -139,7 +150,6 @@ class TelnyxProvider(TelephonyProvider):
             ) as response:
                 if response.status != 200:
                     error_data = await response.json()
-                    logger.error(f"Telnyx API error: {error_data}")
                     raise HTTPException(
                         status_code=response.status, detail=json.dumps(error_data)
                     )
@@ -267,7 +277,7 @@ class TelnyxProvider(TelephonyProvider):
             return False
 
     async def get_webhook_response(
-        self, workflow_id: int, user_id: int, workflow_run_id: int
+        self, workflow_id: int, organization_id: int, workflow_run_id: int
     ) -> str:
         """Not used for Telnyx — streaming is inline with the dial request."""
         return ""
@@ -305,23 +315,31 @@ class TelnyxProvider(TelephonyProvider):
         }
 
     @staticmethod
-    def _resolve_status(event_type: str, payload: Dict[str, Any]) -> str:
+    def _resolve_status(
+        event_type: str, payload: Dict[str, Any]
+    ) -> TelephonyCallStatus | str:
         """Map a Telnyx event type (and hangup cause) to a normalized status."""
         EVENT_STATUS = {
-            "call.initiated": "initiated",
-            "call.answered": "in-progress",
-            "call.hangup": "completed",
+            "call.initiated": TelephonyCallStatus.INITIATED,
+            "call.answered": TelephonyCallStatus.IN_PROGRESS,
+            "call.hangup": TelephonyCallStatus.COMPLETED,
             "call.machine.detection.ended": "machine-detected",
             "streaming.started": "streaming-started",
             "streaming.stopped": "streaming-stopped",
         }
 
+        # Telnyx's documented `hangup_cause` values, plus the earlier
+        # `busy` / `unallocated_number` keys in case those still arrive.
+        # normal_clearing, time_limit and unspecified stay COMPLETED.
         HANGUP_STATUS = {
-            "busy": "busy",
-            "no_answer": "no-answer",
-            "timeout": "no-answer",
-            "call_rejected": "failed",
-            "unallocated_number": "failed",
+            "user_busy": TelephonyCallStatus.BUSY,
+            "busy": TelephonyCallStatus.BUSY,
+            "no_answer": TelephonyCallStatus.NO_ANSWER,
+            "timeout": TelephonyCallStatus.NO_ANSWER,
+            "call_rejected": TelephonyCallStatus.FAILED,
+            "not_found": TelephonyCallStatus.FAILED,
+            "unallocated_number": TelephonyCallStatus.FAILED,
+            "originator_cancel": TelephonyCallStatus.CANCELED,
         }
 
         status = EVENT_STATUS.get(event_type, event_type)
@@ -336,7 +354,7 @@ class TelnyxProvider(TelephonyProvider):
         self,
         websocket: "WebSocket",
         workflow_id: int,
-        user_id: int,
+        organization_id: int,
         workflow_run_id: int,
     ) -> None:
         """Handle Telnyx WebSocket connection for real-time audio.
@@ -404,7 +422,7 @@ class TelnyxProvider(TelephonyProvider):
                 provider_name=self.PROVIDER_NAME,
                 workflow_id=workflow_id,
                 workflow_run_id=workflow_run_id,
-                user_id=user_id,
+                organization_id=organization_id,
                 call_id=call_control_id,
                 transport_kwargs={
                     "stream_id": stream_id,
@@ -649,6 +667,55 @@ class TelnyxProvider(TelephonyProvider):
         )
         return ProviderSyncResult(ok=True)
 
+    async def validate_phone_number(self, address: str) -> ProviderSyncResult:
+        """Verify PSTN ownership through Telnyx's phone-number inventory."""
+        normalized = normalize_telephony_address(address)
+        if normalized.address_type != "pstn":
+            return ProviderSyncResult(ok=True)
+        if not self.api_key:
+            raise ProviderPhoneNumberLookupError(
+                "Telnyx API key is required to validate phone-number ownership"
+            )
+
+        endpoint = f"{self.TELNYX_API_BASE}/phone_numbers"
+        params = {
+            "filter[phone_number]": normalized.canonical,
+            "page[size]": 100,
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    endpoint, params=params, headers=self._headers()
+                ) as response:
+                    if response.status != 200:
+                        body = await response.text()
+                        raise ProviderPhoneNumberLookupError(
+                            f"Telnyx API {response.status}: {body}",
+                            status_code=response.status,
+                        )
+                    data = await response.json()
+        except ProviderPhoneNumberLookupError:
+            raise
+        except Exception as e:
+            raise ProviderPhoneNumberLookupError(
+                f"Telnyx phone-number lookup failed: {e}"
+            ) from e
+
+        owned = any(
+            item.get("phone_number") == normalized.canonical
+            for item in (data.get("data") or [])
+        )
+        if owned:
+            return ProviderSyncResult(ok=True)
+        return ProviderSyncResult(
+            ok=False,
+            message=(
+                f"Phone number {normalized.canonical} is not owned by this "
+                "Telnyx account. Add it in the Telnyx Mission Control "
+                "Portal first."
+            ),
+        )
+
     async def start_inbound_stream(
         self,
         *,
@@ -668,6 +735,9 @@ class TelnyxProvider(TelephonyProvider):
         events_url = (
             f"{backend_endpoint}/api/v1/telephony/telnyx/events/{workflow_run_id}"
         )
+        events_token = ws_auth.mint_events_token(workflow_run_id)
+        if events_token:
+            events_url = f"{events_url}?token={events_token}"
         try:
             await self.answer_and_stream(
                 call_control_id=normalized_data.call_id,
@@ -723,7 +793,7 @@ class TelnyxProvider(TelephonyProvider):
         if not self.validate_config():
             raise ValueError("Telnyx provider not properly configured")
 
-        from_number = random.choice(self.from_numbers)
+        from_number = self.select_from_number()
         logger.info(f"Selected phone number {from_number} for Telnyx transfer call")
 
         backend_endpoint, _ = await get_backend_endpoints()

@@ -7,10 +7,12 @@ import {
   ExternalLink,
   Pencil,
   Plus,
+  RotateCcw,
   Star,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -18,12 +20,14 @@ import {
   deleteTelephonyConfigurationApiV1OrganizationsTelephonyConfigsConfigIdDelete,
   getTelephonyConfigurationByIdApiV1OrganizationsTelephonyConfigsConfigIdGet,
   listTelephonyConfigurationsApiV1OrganizationsTelephonyConfigsGet,
+  reactivateTelephonyConfigurationApiV1OrganizationsTelephonyConfigsConfigIdReactivatePost,
   setDefaultOutboundApiV1OrganizationsTelephonyConfigsConfigIdSetDefaultOutboundPost,
 } from "@/client/sdk.gen";
 import type {
   TelephonyConfigurationDetail,
   TelephonyConfigurationListItem,
 } from "@/client/types.gen";
+import { PageLayout, PageSection } from "@/components/layout/PageLayout";
 import { ConfigFormDialog } from "@/components/telephony/ConfigFormDialog";
 import {
   AlertDialog,
@@ -37,22 +41,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTelephonyConfigWarnings } from "@/context/TelephonyConfigWarningsContext";
 import { detailFromError } from "@/lib/apiError";
 import { useAuth } from "@/lib/auth";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 export default function TelephonyConfigurationsPage() {
   const { user, getAccessToken, loading: authLoading } = useAuth();
+  const searchParams = useSearchParams();
   const {
     telnyxMissingWebhookPublicKeyCount,
+    vonageMissingSignatureSecretCount,
     refresh: refreshWarnings,
   } = useTelephonyConfigWarnings();
   const [items, setItems] = useState<TelephonyConfigurationListItem[]>([]);
@@ -82,9 +82,9 @@ export default function TelephonyConfigurationsPage() {
     }
   }, [authLoading, user, getAccessToken]);
 
-  // After a save (create/update), the backing config may have flipped between
-  // missing/present webhook_public_key — refresh the cached warning state so
-  // the page banner and nav badge update without a manual reload.
+  // After a save (create/update), webhook-verification warning state may have
+  // changed — refresh the cached warning state so the page banner and nav badge
+  // update without a manual reload.
   const onSaved = useCallback(async () => {
     await fetchItems();
     await refreshWarnings();
@@ -93,6 +93,12 @@ export default function TelephonyConfigurationsPage() {
   useEffect(() => {
     fetchItems();
   }, [fetchItems]);
+
+  // ?add=1 lands the user straight on the provider form — used by the Phone
+  // Call dialog's "Add provider" action so the choice isn't asked twice.
+  useEffect(() => {
+    if (searchParams.get("add") === "1") setCreateOpen(true);
+  }, [searchParams]);
 
   const onEdit = async (item: TelephonyConfigurationListItem) => {
     try {
@@ -128,6 +134,25 @@ export default function TelephonyConfigurationsPage() {
     }
   };
 
+  const onReactivate = async (item: TelephonyConfigurationListItem) => {
+    try {
+      const token = await getAccessToken();
+      const res = await reactivateTelephonyConfigurationApiV1OrganizationsTelephonyConfigsConfigIdReactivatePost(
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          path: { config_id: item.id },
+        },
+      );
+      if (res.error) throw new Error(detailFromError(res.error));
+      toast.success(`${item.name} reactivated — reconnecting within a minute`);
+      fetchItems();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to reactivate configuration",
+      );
+    }
+  };
+
   const onConfirmDelete = async () => {
     if (!deleteTarget) return;
     try {
@@ -148,31 +173,19 @@ export default function TelephonyConfigurationsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex items-start justify-between gap-4 mb-6">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Telephony configurations</h1>
-            <p className="text-muted-foreground">
-              Connect one or more telephony provider accounts. Each campaign uses one
-              configuration; inbound calls are routed to the right one by account ID.{" "}
-              <a
-                href="https://docs.dograh.com/integrations/telephony/overview"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-0.5 underline"
-              >
-                Learn more <ExternalLink className="h-3 w-3" />
-              </a>
-            </p>
-          </div>
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" /> Add configuration
-          </Button>
-        </div>
-
+    <>
+      <PageLayout title="Telephony configurations" description={<>Connect one or more telephony provider accounts. Each campaign uses one
+        configuration; inbound calls are routed to the right one by account ID.{" "}
+        <a
+          href="https://docs.dograh.com/integrations/telephony/overview"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-0.5 underline"
+        >
+          Learn more <ExternalLink className="h-3 w-3" />
+        </a></>}>
         {telnyxMissingWebhookPublicKeyCount > 0 && (
-          <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
             <div className="flex items-start gap-3">
               <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
               <div className="space-y-1 text-sm">
@@ -194,30 +207,44 @@ export default function TelephonyConfigurationsPage() {
           </div>
         )}
 
-        {loading ? (
-          <div className="grid gap-3">
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-24 w-full" />
+        {vonageMissingSignatureSecretCount > 0 && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div className="space-y-1 text-sm">
+                <p className="font-medium">Signature secret not configured</p>
+                <p>
+                  {vonageMissingSignatureSecretCount === 1
+                    ? "1 Vonage configuration is"
+                    : `${vonageMissingSignatureSecretCount} Vonage configurations are`}{" "}
+                  missing a signature secret. Without it, Vonage signed webhooks
+                  are rejected, so inbound calls and call status updates will not
+                  work. Copy the signature secret from your Vonage account and
+                  paste it into the affected Vonage configuration below.
+                </p>
+              </div>
+            </div>
           </div>
-        ) : items.length === 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>No telephony configurations yet</CardTitle>
-              <CardDescription>
-                Add one to enable outbound calls and receive inbound calls.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button onClick={() => setCreateOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" /> Add configuration
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-3">
-            {items.map((item) => (
-              <Card key={item.id}>
-                <CardContent className="flex items-center gap-4 py-4">
+        )}
+
+        <PageSection title="Your Configurations"
+          description="Manage telephony provider accounts and their phone numbers."
+          actions={<Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />Add configuration</Button>}>
+          {loading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : items.length === 0 ? (
+            <div className="py-12 text-center">
+              <p className="mb-2 font-medium">No telephony configurations yet</p>
+              <p className="mb-4 text-sm text-muted-foreground">Add one to enable outbound calls and receive inbound calls.</p>
+              <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />Add configuration</Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {items.map((item) => (
+                <div key={item.id} className="flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center">
                   <Link
                     href={`/telephony-configurations/${item.id}`}
                     className="flex flex-1 items-center gap-4 min-w-0"
@@ -232,18 +259,42 @@ export default function TelephonyConfigurationsPage() {
                             Default
                           </Badge>
                         )}
+                        {item.inactive && (
+                          <Badge variant="destructive">Inactive</Badge>
+                        )}
+                        {!item.inactive &&
+                          item.supports_outbound !== false &&
+                          item.is_ready_for_outbound === false && (
+                          <Badge
+                            variant="outline"
+                            className="gap-1 border-amber-400 text-amber-700 dark:border-amber-700 dark:text-amber-400"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Setup incomplete
+                          </Badge>
+                        )}
                       </div>
                       <span className="text-sm text-muted-foreground">
                         {item.phone_number_count} phone{" "}
                         {item.phone_number_count === 1 ? "number" : "numbers"}
                       </span>
+                      {item.inactive && (
+                        <span className="text-sm text-destructive">
+                          Disabled after repeated connection failures
+                          {item.inactive_reason ? `: ${item.inactive_reason}` : ""}
+                        </span>
+                      )}
+                      {!item.inactive && item.outbound_blocked_reason && (
+                        <span className="text-sm text-amber-700 dark:text-amber-500">
+                          {item.outbound_blocked_reason}
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          navigator.clipboard
-                            .writeText(String(item.id))
+                          copyTextToClipboard(String(item.id))
                             .then(() => toast.success("Configuration ID copied"))
                             .catch(() => toast.error("Failed to copy ID"));
                         }}
@@ -255,8 +306,19 @@ export default function TelephonyConfigurationsPage() {
                       </button>
                     </div>
                   </Link>
-                  <div className="flex items-center gap-1">
-                    {!item.is_default_outbound && (
+                  <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:flex-nowrap">
+                    {item.inactive && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onReactivate(item)}
+                        title="Reconnect this configuration now"
+                      >
+                        <RotateCcw className="h-4 w-4 mr-1" />
+                        Reactivate
+                      </Button>
+                    )}
+                    {!item.is_default_outbound && item.supports_outbound !== false && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -282,25 +344,28 @@ export default function TelephonyConfigurationsPage() {
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
-                    <Link
-                      href={`/telephony-configurations/${item.id}`}
-                      className="text-muted-foreground"
-                      aria-label="View phone numbers"
-                    >
-                      <ChevronRight className="h-5 w-5" />
-                    </Link>
+                    <Button variant="outline" size="sm" asChild>
+                      <Link
+                        href={`/telephony-configurations/${item.id}`}
+                        aria-label={`Manage phone numbers for ${item.name}`}
+                      >
+                        Manage Phone Numbers
+                        <ChevronRight className="h-4 w-4" />
+                      </Link>
+                    </Button>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </PageSection>
+      </PageLayout>
 
       <ConfigFormDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
         existing={null}
+        suggestDefaultOutbound={!items.some((item) => item.is_default_outbound)}
         onSaved={onSaved}
       />
       <ConfigFormDialog
@@ -329,6 +394,6 @@ export default function TelephonyConfigurationsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }

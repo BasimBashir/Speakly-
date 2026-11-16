@@ -11,7 +11,7 @@ from api.db import db_client
 from api.db.models import EmbedTokenModel, UserModel
 from api.enums import PostHogEvent
 from api.services.auth.depends import get_user
-from api.services.posthog_client import capture_event
+from api.services.posthog_tenant import capture_tenant_event
 
 router = APIRouter(prefix="/workflow")
 
@@ -20,13 +20,19 @@ def generate_embed_script(token: EmbedTokenModel) -> str:
     """Generate the embed script for a given token."""
     base_url = str(UI_APP_URL).rstrip("/")
 
-    return f"""<!-- Dograh Voice Widget -->
+    return f"""<!-- Dograh Widget -->
 <script>
   (function(d, s, id) {{
     var js, fjs = d.getElementsByTagName(s)[0];
     if (d.getElementById(id)) return;
     js = d.createElement(s); js.id = id;
     js.src = '{base_url}/embed/dograh-widget.js?token={token.token}&environment={ENVIRONMENT}&apiEndpoint={BACKEND_API_ENDPOINT}';
+    // Details about this visitor, available in your prompts as
+    // {{{{initial_context.page_url}}}}. Edit these or add your own.
+    js.setAttribute('data-dograh-context', JSON.stringify({{
+      page_url: window.location.href,
+      today: new Date().toISOString().slice(0, 10)
+    }}));
     js.async = true;
     fjs.parentNode.insertBefore(js, fjs);
   }}(document, 'script', 'dograh-widget'));
@@ -105,14 +111,14 @@ async def create_or_update_embed_token(
             expires_at=expires_at,
         )
 
-    capture_event(
+    await capture_tenant_event(
         distinct_id=str(user.provider_id),
         event=PostHogEvent.AGENT_EMBEDDED,
+        organization_id=user.selected_organization_id,
         properties={
-            "workflow_id": workflow_id,
+            "workflow_uuid": workflow.workflow_uuid,
             "is_new_token": len(existing_tokens) == 0,
             "has_domain_restriction": bool(embed_request.allowed_domains),
-            "organization_id": user.selected_organization_id,
         },
     )
 

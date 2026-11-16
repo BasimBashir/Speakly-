@@ -6,30 +6,36 @@ import {
     Panel,
     ReactFlow,
 } from "@xyflow/react";
-import { BrushCleaning, Maximize2, Minus, Plus, Settings } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { BrushCleaning, Maximize2, Minus, Plus } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import { createWorkflowDraftApiV1WorkflowWorkflowIdCreateDraftPost, getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet, listDocumentsApiV1KnowledgeBaseDocumentsGet, listRecordingsApiV1WorkflowRecordingsGet, listToolsApiV1ToolsGet } from '@/client';
-import type { DocumentResponseSchema, RecordingResponseSchema, ToolResponse } from '@/client/types.gen';
+import type { DocumentResponseSchema, RecordingResponseSchema, ToolResponse, WorkflowVersionResponse } from '@/client/types.gen';
 import { useNodeSpecs } from "@/components/flow/renderer";
 import { FlowEdge, FlowNode, NodeType } from "@/components/flow/types";
+import { HireExpertNudge } from "@/components/lead-forms/HireExpertNudge";
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useOnboarding } from '@/context/OnboardingContext';
+import { UnsavedChangesProvider, useUnsavedChangesContext } from '@/context/UnsavedChangesContext';
+import { detailFromError } from '@/lib/apiError';
 import { WorkflowConfigurations } from '@/types/workflow-configurations';
 
 import AddNodePanel from "../../../components/flow/AddNodePanel";
 import CustomEdge from "../../../components/flow/edges/CustomEdge";
 import { GenericNode } from "../../../components/flow/nodes/GenericNode";
+import { EditorSetup, type EditorView, isEditorView } from './components/EditorSetup';
 import { PhoneCallDialog } from './components/PhoneCallDialog';
-import { VersionHistoryPanel, WorkflowVersion } from './components/VersionHistoryPanel';
+import { VersionHistoryPanel } from './components/VersionHistoryPanel';
 import type { WorkflowRuntimeNodeTransition } from './components/workflow-tester/types';
 import { WorkflowEditorHeader } from "./components/WorkflowEditorHeader";
 import { WorkflowTesterPanel } from './components/WorkflowTesterPanel';
+import { WorkflowVersionDiffDialog } from './components/WorkflowVersionDiffDialog';
 import { WorkflowProvider } from "./contexts/WorkflowContext";
-import { useWorkflowState } from "./hooks/useWorkflowState";
+import { type SavedVersion, useWorkflowState } from "./hooks/useWorkflowState";
 import { layoutNodes } from './utils/layoutNodes';
 
 const edgeTypes = {
@@ -57,10 +63,22 @@ interface RenderWorkflowProps {
     initialWorkflowConfigurations?: WorkflowConfigurations;
     initialVersionNumber?: number | null;
     initialVersionStatus?: string | null;
+    initialSelectedVersion?: WorkflowVersionResponse;
     user: { id: string; email?: string };
 }
 
-function RenderWorkflow({
+// The settings views register unsaved edits with this provider, so leaving
+// them, whether by switching view, picking a version from History, or
+// navigating away, asks first.
+function RenderWorkflow(props: RenderWorkflowProps) {
+    return (
+        <UnsavedChangesProvider>
+            <WorkflowEditor {...props} />
+        </UnsavedChangesProvider>
+    );
+}
+
+function WorkflowEditor({
     initialWorkflowName,
     workflowId,
     workflowUuid,
@@ -71,9 +89,12 @@ function RenderWorkflow({
     initialWorkflowConfigurations,
     initialVersionNumber,
     initialVersionStatus,
+    initialSelectedVersion,
     user,
 }: RenderWorkflowProps) {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const { confirmNavigate } = useUnsavedChangesContext();
     const { specs } = useNodeSpecs();
     const { hasCompletedAction } = useOnboarding();
     const [isPhoneCallDialogOpen, setIsPhoneCallDialogOpen] = useState(false);
@@ -81,16 +102,39 @@ function RenderWorkflow({
     const [isTesterRailOpen, setIsTesterRailOpen] = useState(true);
     const [isTesterSheetOpen, setIsTesterSheetOpen] = useState(false);
     const [isDesktopViewport, setIsDesktopViewport] = useState(false);
-    const [versions, setVersions] = useState<WorkflowVersion[]>([]);
+    const [versions, setVersions] = useState<WorkflowVersionResponse[]>([]);
     const [versionsLoading, setVersionsLoading] = useState(false);
     const [versionsLoadingMore, setVersionsLoadingMore] = useState(false);
     const [versionsHasMore, setVersionsHasMore] = useState(false);
-    const [activeVersionId, setActiveVersionId] = useState<number | null>(null);
+    const [activeVersionId, setActiveVersionId] = useState<number | null>(initialSelectedVersion?.id ?? null);
+    const [comparingVersionId, setComparingVersionId] = useState<number | null>(null);
+    const [versionDiffPair, setVersionDiffPair] = useState<{
+        previousVersion: WorkflowVersionResponse;
+        selectedVersion: WorkflowVersionResponse;
+    } | null>(null);
     const hasAutoOpenedTester = useRef(false);
     // Version info that updates immediately from the GET/save/publish responses.
     const [currentVersionNumber, setCurrentVersionNumber] = useState<number | null>(initialVersionNumber ?? null);
     const [currentVersionStatus, setCurrentVersionStatus] = useState<string | null>(initialVersionStatus ?? null);
+    // What the editor body shows. It lives in the URL (`?view=`) so a refresh
+    // or a shared link lands on the same view; the canvas is the bare URL.
+    const viewParam = searchParams.get('view');
+    const editorView: EditorView = isEditorView(viewParam) ? viewParam : 'canvas';
+    const setEditorView = useCallback((view: EditorView) => {
+        const query = new URLSearchParams(searchParams.toString());
+        if (view === 'canvas') query.delete('view');
+        else query.set('view', view);
+        const suffix = query.toString();
+        router.replace(`/workflow/${workflowId}${suffix ? `?${suffix}` : ''}`, { scroll: false });
+    }, [router, searchParams, workflowId]);
     const versionsFetched = useRef(false);
+    // The version bookkeeping for settings saves lives below, after the
+    // version fetcher it needs; the state hook reaches it through this ref.
+    const applySavedVersionRef = useRef<(version: SavedVersion) => void>(() => undefined);
+    const onVersionSaved = useCallback((version: SavedVersion) => applySavedVersionRef.current(version), []);
+    // A model edit waiting to save or still saving: publishing or testing now
+    // would use the previous settings.
+    const [settingsSaving, setSettingsSaving] = useState(false);
     const [documents, setDocuments] = useState<DocumentResponseSchema[] | undefined>(undefined);
     const [tools, setTools] = useState<ToolResponse[] | undefined>(undefined);
     const [recordings, setRecordings] = useState<RecordingResponseSchema[]>([]);
@@ -113,9 +157,17 @@ function RenderWorkflow({
         saveWorkflow,
         workflowConfigurations,
         saveWorkflowConfigurations,
+        saveTemplateContextVariables,
+        defaultCallDispositions,
+        defaultAnswerClassifierPrompt,
+        textChatInactivityTimeoutConstraints,
+        widgetTextDefaults,
+        dictionary,
+        saveDictionary,
         onConnect,
         onEdgesChange,
         onNodesChange,
+        onDelete,
     } = useWorkflowState({
         initialWorkflowName,
         workflowId,
@@ -123,6 +175,7 @@ function RenderWorkflow({
         initialTemplateContextVariables,
         initialWorkflowConfigurations,
         user,
+        onVersionSaved,
     });
 
     // Single generic component for every node type. Seed with core node types
@@ -148,28 +201,42 @@ function RenderWorkflow({
     // Pagination keeps the panel snappy when a workflow has accumulated a long
     // history — `workflow_json` is shipped per row, so loading hundreds at once
     // is expensive on the wire.
-    const fetchVersions = useCallback(async (force = false) => {
+    const fetchVersions = useCallback(async (
+        force = false,
+        preserveActiveVersion = false,
+    ) => {
         if (versionsFetched.current && !force) return;
         setVersionsLoading(true);
         try {
             const response = await getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet({
                 path: { workflow_id: workflowId },
-                query: { limit: VERSIONS_PAGE_SIZE, offset: 0 },
+                // Fetch one extra row so `hasMore` is exact. This also lets the
+                // history panel reliably hide Compare on v1.
+                query: { limit: VERSIONS_PAGE_SIZE + 1, offset: 0 },
             });
-            const data = response.data as WorkflowVersion[] | undefined;
+            if (response.error) {
+                toast.error(detailFromError(response.error, "Failed to load version history"));
+                return;
+            }
+            const data = response.data;
             if (data) {
-                setVersions(data);
-                setVersionsHasMore(data.length === VERSIONS_PAGE_SIZE);
+                const page = data.slice(0, VERSIONS_PAGE_SIZE);
+                setVersions(page);
+                setVersionsHasMore(data.length > VERSIONS_PAGE_SIZE);
                 // Set active version to draft if exists, else published.
                 // Both live on the newest page so the first fetch always sees them.
-                const current = data.find((v) => v.status === "draft") ?? data.find((v) => v.status === "published");
+                const current = page.find((v) => v.status === "draft") ?? page.find((v) => v.status === "published");
                 if (current) {
-                    setActiveVersionId(current.id);
+                    setActiveVersionId((existingActiveVersionId) => (
+                        preserveActiveVersion && existingActiveVersionId !== null
+                            ? existingActiveVersionId
+                            : current.id
+                    ));
                     setCurrentVersionNumber(current.version_number);
                     setCurrentVersionStatus(current.status);
                 }
+                versionsFetched.current = true;
             }
-            versionsFetched.current = true;
         } finally {
             setVersionsLoading(false);
         }
@@ -181,12 +248,16 @@ function RenderWorkflow({
         try {
             const response = await getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet({
                 path: { workflow_id: workflowId },
-                query: { limit: VERSIONS_PAGE_SIZE, offset: versions.length },
+                query: { limit: VERSIONS_PAGE_SIZE + 1, offset: versions.length },
             });
-            const data = response.data as WorkflowVersion[] | undefined;
+            if (response.error) {
+                toast.error(detailFromError(response.error, "Failed to load more versions"));
+                return;
+            }
+            const data = response.data;
             if (data) {
-                setVersions((prev) => [...prev, ...data]);
-                setVersionsHasMore(data.length === VERSIONS_PAGE_SIZE);
+                setVersions((prev) => [...prev, ...data.slice(0, VERSIONS_PAGE_SIZE)]);
+                setVersionsHasMore(data.length > VERSIONS_PAGE_SIZE);
             }
         } finally {
             setVersionsLoadingMore(false);
@@ -195,38 +266,100 @@ function RenderWorkflow({
 
     const handleOpenVersionPanel = useCallback(() => {
         setIsVersionPanelOpen(true);
-        fetchVersions();
+        void fetchVersions(false, true);
     }, [fetchVersions]);
 
-    const handleSelectVersion = useCallback((version: WorkflowVersion) => {
-        setActiveVersionId(version.id);
-        const wfJson = version.workflow_json;
-        const flowNodes = (wfJson.nodes ?? []) as FlowNode[];
-        const flowEdges = (wfJson.edges ?? []) as FlowEdge[];
+    const handleCompareVersion = useCallback(async (version: WorkflowVersionResponse) => {
+        if (comparingVersionId !== null) return;
 
-        // Update the Zustand store directly instead of rfInstance.current.setNodes().
-        // This keeps data flow unidirectional (store → props → ReactFlow) and avoids
-        // xyflow's d3 event handlers interfering with React's event delegation.
-        // The key={activeVersionId} on <ReactFlow> forces a clean remount.
-        setNodes(flowNodes);
-        setEdges(flowEdges);
-        // Never mark dirty when switching versions — historical versions are
-        // read-only, and loading the draft is restoring the saved state.
-        setIsDirty(false);
+        const selectedIndex = versions.findIndex((candidate) => candidate.id === version.id);
+        if (selectedIndex < 0) {
+            toast.error("That workflow version is no longer in the history list");
+            return;
+        }
+
+        setComparingVersionId(version.id);
+        try {
+            // Fetch the selected row and the row immediately below it afresh.
+            // The offset also handles comparisons that cross a pagination boundary.
+            const response = await getWorkflowVersionsApiV1WorkflowWorkflowIdVersionsGet({
+                path: { workflow_id: workflowId },
+                query: { limit: 2, offset: selectedIndex },
+            });
+            if (response.error) {
+                toast.error(detailFromError(response.error, "Failed to compare workflow versions"));
+                return;
+            }
+
+            const pair = response.data;
+            const selectedVersion = pair?.[0];
+            const previousVersion = pair?.[1];
+
+            // A new draft may have been inserted since the panel opened, shifting
+            // every offset. Refresh instead of showing a mismatched comparison.
+            if (!selectedVersion || selectedVersion.id !== version.id) {
+                await fetchVersions(true, true);
+                toast.error("Version history changed. Please try the comparison again.");
+                return;
+            }
+            if (
+                !previousVersion ||
+                previousVersion.version_number >= selectedVersion.version_number
+            ) {
+                toast.error(`v${selectedVersion.version_number} has no previous version`);
+                return;
+            }
+
+            // Keep the panel's cached copies in sync with the fresh pair so they
+            // remain current when the dialog closes and history reopens.
+            setVersions((currentVersions) => currentVersions.map((currentVersion) => (
+                pair?.find((freshVersion) => freshVersion.id === currentVersion.id)
+                ?? currentVersion
+            )));
+            setVersionDiffPair({ previousVersion, selectedVersion });
+            setIsVersionPanelOpen(false);
+        } catch {
+            toast.error("Failed to compare workflow versions");
+        } finally {
+            setComparingVersionId(null);
+        }
+    }, [comparingVersionId, fetchVersions, versions, workflowId]);
+
+    const handleVersionDiffOpenChange = useCallback((open: boolean) => {
+        if (open) return;
+        setVersionDiffPair(null);
+        setIsVersionPanelOpen(true);
+    }, []);
+
+    const navigateToVersion = useCallback((version: number | null) => {
+        const query = new URLSearchParams(searchParams.toString());
+        if (version === null) query.delete('version');
+        else query.set('version', String(version));
+        const suffix = query.toString();
+        router.push(`/workflow/${workflowId}${suffix ? `?${suffix}` : ''}`, { scroll: false });
         setIsVersionPanelOpen(false);
-    }, [setNodes, setEdges, setIsDirty]);
+    }, [router, searchParams, workflowId]);
+
+    const handleSelectVersion = useCallback((version: WorkflowVersionResponse) => {
+        const isCurrentVersion = version.status === 'draft'
+            || (version.status === 'published' && !hasDraft);
+        // Opening a version remounts the editor, so unsaved settings would be lost.
+        confirmNavigate(() => navigateToVersion(isCurrentVersion ? null : version.version_number));
+    }, [confirmNavigate, hasDraft, navigateToVersion]);
 
     // Determine if we are viewing a historical (non-current) version.
     // The "current" version is the draft if one exists, otherwise the published version.
     // Anything else (archived, or published while a draft exists) is historical.
     const isViewingHistoricalVersion = useMemo(() => {
+        // Explicit version links open a saved snapshot, including the latest release.
+        if (initialSelectedVersion?.id === activeVersionId) return true;
         if (!activeVersionId || versions.length === 0) return false;
         const activeVersion = versions.find((v) => v.id === activeVersionId);
         if (!activeVersion) return false;
         if (activeVersion.status === "draft") return false;
         if (activeVersion.status === "published" && !hasDraft) return false;
         return true;
-    }, [activeVersionId, versions, hasDraft]);
+    }, [activeVersionId, versions, hasDraft, initialSelectedVersion]);
 
     useEffect(() => {
         if (!isViewingHistoricalVersion) {
@@ -237,6 +370,10 @@ function RenderWorkflow({
 
     // Return to the draft version, creating one from published if needed
     const handleBackToDraft = useCallback(async () => {
+        if (initialSelectedVersion) {
+            navigateToVersion(null);
+            return;
+        }
         const existingDraft = versions.find((v) => v.status === "draft");
         if (existingDraft) {
             handleSelectVersion(existingDraft);
@@ -261,7 +398,7 @@ function RenderWorkflow({
             // Refresh the version list so the new draft appears
             fetchVersions(true);
         }
-    }, [versions, handleSelectVersion, workflowId, setNodes, setEdges, setIsDirty, fetchVersions]);
+    }, [versions, handleSelectVersion, workflowId, setNodes, setEdges, setIsDirty, fetchVersions, initialSelectedVersion, navigateToVersion]);
 
     // After a successful publish, refresh the version list and update status
     const handlePublished = useCallback(() => {
@@ -269,13 +406,29 @@ function RenderWorkflow({
         fetchVersions(true);
     }, [fetchVersions]);
 
+    // A save can turn a published workflow into a draft. If the versions list
+    // has been fetched (user interacted with versioning or published), refresh
+    // it so that activeVersionId points to the correct version: otherwise it
+    // would still point to the old published version, making
+    // isViewingHistoricalVersion true and locking the editor read-only.
+    const applySavedVersion = useCallback(async (version: SavedVersion) => {
+        if (versionsFetched.current) {
+            await fetchVersions(true);
+            return;
+        }
+        if (version.versionNumber != null) setCurrentVersionNumber(version.versionNumber);
+        if (version.versionStatus) setCurrentVersionStatus(version.versionStatus);
+    }, [fetchVersions]);
+    applySavedVersionRef.current = (version) => { void applySavedVersion(version); };
+
     // Compute version label for the header.
     // Uses currentVersionNumber/Status which update immediately from save responses,
     // falling back to the versions list for history navigation.
     const activeVersionLabel = useMemo(() => {
         // When viewing a version from the history panel, use the versions list
-        if (activeVersionId && versions.length > 0) {
-            const v = versions.find((ver) => ver.id === activeVersionId);
+        if (activeVersionId) {
+            const v = versions.find((ver) => ver.id === activeVersionId)
+                ?? (initialSelectedVersion?.id === activeVersionId ? initialSelectedVersion : undefined);
             if (v) {
                 const statusSuffix = v.status === "draft" ? " (Draft)" : v.status === "published" ? " (Published)" : "";
                 return `v${v.version_number}${statusSuffix}`;
@@ -287,7 +440,7 @@ function RenderWorkflow({
             return `v${currentVersionNumber}${statusSuffix}`;
         }
         return undefined;
-    }, [activeVersionId, versions, currentVersionNumber, currentVersionStatus]);
+    }, [activeVersionId, versions, currentVersionNumber, currentVersionStatus, initialSelectedVersion]);
 
     const testerDisabledReason = useMemo(() => {
         if (isViewingHistoricalVersion) {
@@ -296,11 +449,14 @@ function RenderWorkflow({
         if (isDirty) {
             return "Save the latest draft before testing so the session uses the workflow you are looking at.";
         }
+        if (settingsSaving) {
+            return "Wait for the model settings to finish saving so the session uses them.";
+        }
         if (workflowValidationErrors.length > 0) {
             return "Resolve the current validation errors before starting another test.";
         }
         return null;
-    }, [isDirty, isViewingHistoricalVersion, workflowValidationErrors.length]);
+    }, [isDirty, isViewingHistoricalVersion, settingsSaving, workflowValidationErrors.length]);
 
     const handleOpenTester = useCallback(() => {
         if (window.innerWidth >= 1280) {
@@ -423,26 +579,13 @@ function RenderWorkflow({
     const guardedSaveWorkflow = useCallback(async (updateWorkflowDefinition?: boolean) => {
         if (isViewingHistoricalVersion) return;
         const result = await saveWorkflow(updateWorkflowDefinition);
-        if (result) {
-            // If the versions list has been fetched (user interacted with versioning
-            // or published), refresh it so that activeVersionId points to the correct
-            // version.  This is critical when a save creates a new draft from a
-            // published version: without refreshing, activeVersionId would still
-            // point to the old published version, causing isViewingHistoricalVersion
-            // to incorrectly return true and lock the editor into read-only mode.
-            if (versionsFetched.current) {
-                await fetchVersions(true);
-            } else {
-                if (result.versionNumber != null) setCurrentVersionNumber(result.versionNumber);
-                if (result.versionStatus) setCurrentVersionStatus(result.versionStatus);
-            }
-        }
-    }, [saveWorkflow, isViewingHistoricalVersion, fetchVersions]);
+        if (result) await applySavedVersion(result);
+    }, [saveWorkflow, isViewingHistoricalVersion, applySavedVersion]);
 
     const renameWorkflow = useCallback(async (newName: string) => {
         // The header doesn't render the pencil until the page has mounted with
         // initial data, so workflowConfigurations is non-null by the time this
-        // runs. Throw rather than silently sending DEFAULT_WORKFLOW_CONFIGURATIONS,
+        // runs. Throw rather than silently sending fallback workflow configurations,
         // which would overwrite the saved server-side config.
         if (!workflowConfigurations) {
             throw new Error("Workflow configurations not loaded");
@@ -481,6 +624,7 @@ function RenderWorkflow({
     return (
         <WorkflowProvider value={workflowContextValue}>
             <div className="flex flex-col h-screen min-w-fit">
+                <HireExpertNudge workflowId={workflowId} />
                 {/* New Workflow Editor Header */}
                 <WorkflowEditorHeader
                     workflowName={workflowName}
@@ -498,6 +642,7 @@ function RenderWorkflow({
                     isViewingHistoricalVersion={isViewingHistoricalVersion}
                     onBackToDraft={handleBackToDraft}
                     hasDraft={hasDraft}
+                    savingSettings={settingsSaving}
                     onPublished={handlePublished}
                     renameWorkflow={renameWorkflow}
                 />
@@ -512,10 +657,11 @@ function RenderWorkflow({
                                 edges={edges}
                                 onNodesChange={onNodesChange}
                                 onEdgesChange={onEdgesChange}
+                                onDelete={onDelete}
                                 nodeTypes={nodeTypes}
                                 edgeTypes={edgeTypes}
                                 onConnect={isViewingHistoricalVersion ? undefined : onConnect}
-                                minZoom={0.4}
+                                minZoom={0.2}
                                 onInit={(instance) => {
                                     rfInstance.current = instance;
                                     // Center the workflow on load
@@ -538,7 +684,7 @@ function RenderWorkflow({
                                     color="#94a3b8"
                                 />
 
-                                {/* Top-right controls - vertical layout (hidden when viewing history) */}
+                                {/* Top-right controls (hidden when viewing history) */}
                                 {!isViewingHistoricalVersion && (
                                     <Panel position="top-right">
                                         <TooltipProvider>
@@ -556,22 +702,6 @@ function RenderWorkflow({
                                                     </TooltipTrigger>
                                                     <TooltipContent side="left">
                                                         <p>Add node</p>
-                                                    </TooltipContent>
-                                                </Tooltip>
-
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Button
-                                                            variant="outline"
-                                                            size="icon"
-                                                            onClick={() => router.push(`/workflow/${workflowId}/settings`)}
-                                                            className="bg-white shadow-sm hover:shadow-md"
-                                                        >
-                                                            <Settings className="h-4 w-4" />
-                                                        </Button>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent side="left">
-                                                        <p>Workflow settings</p>
                                                     </TooltipContent>
                                                 </Tooltip>
                                             </div>
@@ -653,6 +783,29 @@ function RenderWorkflow({
                                     )}
                                 </TooltipProvider>
                             </div>
+
+                            {/* View switcher (Canvas / Model / Variables / Settings); the other views cover the canvas */}
+                            {!isViewingHistoricalVersion && (
+                                <EditorSetup
+                                    view={editorView}
+                                    onViewChange={setEditorView}
+                                    onSavingChange={setSettingsSaving}
+                                    workflowId={workflowId}
+                                    workflowName={workflowName}
+                                    workflowUuid={workflowUuid}
+                                    nodes={nodes}
+                                    workflowConfigurations={workflowConfigurations}
+                                    defaultCallDispositions={defaultCallDispositions}
+                                    defaultAnswerClassifierPrompt={defaultAnswerClassifierPrompt}
+                                    textChatInactivityTimeoutConstraints={textChatInactivityTimeoutConstraints}
+                                    widgetTextDefaults={widgetTextDefaults}
+                                    templateContextVariables={templateContextVariables}
+                                    dictionary={dictionary}
+                                    saveWorkflowConfigurations={saveWorkflowConfigurations}
+                                    saveTemplateContextVariables={saveTemplateContextVariables}
+                                    saveDictionary={saveDictionary}
+                                />
+                            )}
                         </div>
 
                         {isTesterRailOpen && (
@@ -690,19 +843,35 @@ function RenderWorkflow({
                     isOpen={isAddNodePanelOpen}
                     onNodeSelect={handleNodeSelect}
                     onClose={() => setIsAddNodePanelOpen(false)}
+                    nodes={nodes}
                 />
 
                 <VersionHistoryPanel
+                    workflowId={workflowId}
                     isOpen={isVersionPanelOpen}
                     onClose={() => setIsVersionPanelOpen(false)}
                     versions={versions}
                     loading={versionsLoading}
                     activeVersionId={activeVersionId}
                     onSelectVersion={handleSelectVersion}
+                    onCompareVersion={handleCompareVersion}
+                    comparingVersionId={comparingVersionId}
                     hasMore={versionsHasMore}
                     loadingMore={versionsLoadingMore}
                     onLoadMore={handleLoadMoreVersions}
+                    onVersionUpdated={(metadata) => setVersions((previous) => previous.map((version) => (
+                        version.id === metadata.id ? { ...version, ...metadata } : version
+                    )))}
                 />
+
+                {versionDiffPair && (
+                    <WorkflowVersionDiffDialog
+                        open
+                        onOpenChange={handleVersionDiffOpenChange}
+                        previousVersion={versionDiffPair.previousVersion}
+                        selectedVersion={versionDiffPair.selectedVersion}
+                    />
+                )}
 
                 <PhoneCallDialog
                     open={isPhoneCallDialogOpen}
