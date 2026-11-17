@@ -8,7 +8,9 @@ validation runs as in the UI. Re-runnable on any deployment.
 
 Env: DOGRAH_API_KEY (Settings -> API keys), DOGRAH_API_URL
 (default http://localhost:8000/api/v1), DOGRAH_KB_DOC_UUID (optional: reuse an
-already-uploaded knowledge-base document instead of uploading a new copy).
+already-uploaded knowledge-base document instead of uploading a new copy),
+DOGRAH_WORKFLOW_ID (optional: update this workflow and publish a new version
+instead of creating a new one).
 
 Outbound campaign CSVs may include `first_name` and `clinic_name` columns; both
 are optional (the prompts fall back gracefully).
@@ -47,6 +49,7 @@ You are {AGENT}, the AI phone assistant of {COMPANY}. {COMPANY} gives clinics an
 - Only state facts from this prompt or the knowledge base. For anything else say {FOUNDER} can confirm it, and move on.
 - Never quote a price, a range or a discount. Pricing is tailored; {FOUNDER}, the founder, prepares a quote after a short demo.
 - Never promise that Speakly works with the caller's specific software. Say {FOUNDER} will check their exact systems and confirm.
+- You cannot look anything up, check availability, put anyone on hold, or connect or transfer anyone during this call. Never say "one moment", "let me check", "hold on", or "connecting you". If asked to be connected with {FOUNDER}, explain that {FOUNDER} will contact them right after the call, and collect their contact details so he can.
 - Never claim certifications such as ISO 27001, SOC 2 or HIPAA certification. Offer that {FOUNDER} shares the security documentation.
 - Never pressure anyone. Respect a no. If they ask not to be contacted again, apologise briefly, confirm they will not be contacted again, and end the call.
 
@@ -80,6 +83,7 @@ DISCOVERY_PROMPT = f"""# THIS STEP: UNDERSTAND THEIR CLINIC, THEN SHOW THE FIT
 2. Reflect back what you heard in one sentence, then connect one or two benefits to their specific pain. For example: "So lunchtime calls go to voicemail. That's exactly the gap Speakly fills: it picks up every call and books straight into your system."
 3. Answer questions and objections: acknowledge, answer in one or two sentences, then check it landed. For details beyond your key facts, such as integrations, security, setup, hardware or rollout, look them up in the knowledge base before answering. If it is not there, say {FOUNDER} will confirm.
 4. Once they show interest or their main questions are answered, propose the next step: "The easiest next step is a fifteen-minute demo with {FOUNDER}, our founder, using your clinic's own call types. Would that be useful?"
+If they want to speak with {FOUNDER} or be connected with him: do not offer to check his availability or hold — say {FOUNDER} will contact them right after this call, then collect their details: name, clinic, best email or phone, and a good time to reach them.
 If they decline twice or want to stop, end politely. Never repeat the same pitch."""
 
 BOOKING_PROMPT = f"""# THIS STEP: CONFIRM THE FOLLOW-UP DETAILS
@@ -226,16 +230,30 @@ def main() -> None:
     with httpx.Client(base_url=API, headers={"X-API-Key": key}, timeout=60) as client:
         doc_uuid = os.environ.get("DOGRAH_KB_DOC_UUID") or upload_knowledge_base(client)
         print(f"knowledge base document: {doc_uuid}")
-        wf = check(client.post("/workflow/create/definition",
-                               json={"name": NAME, "workflow_definition": definition(doc_uuid)}))
-        check(client.put(f"/workflow/{wf['id']}", json={
-            "workflow_definition": definition(doc_uuid),
-            "workflow_configurations": CONFIGURATIONS,
-            "template_context_variables": TEMPLATE_VARIABLES,
-        }))
-        check(client.post(f"/workflow/{wf['id']}/publish",
-                          json={"version_name": "v1", "change_description": "Initial Speakly sales agent"}))
-        print(f"workflow {wf['id']} created and published: {NAME}")
+        wf_id = os.environ.get("DOGRAH_WORKFLOW_ID")
+        version = "v2" if wf_id else "v1"
+        description = ("Tightened honesty rules: no fake mid-call actions or holds, "
+                       "booking details when the caller asks for the founder"
+                       if wf_id else "Initial Speakly sales agent")
+        if wf_id:
+            check(client.put(f"/workflow/{wf_id}", json={
+                "workflow_definition": definition(doc_uuid),
+                "workflow_configurations": CONFIGURATIONS,
+                "template_context_variables": TEMPLATE_VARIABLES,
+            }))
+        else:
+            wf = check(client.post("/workflow/create/definition",
+                                   json={"name": NAME, "workflow_definition": definition(doc_uuid)}))
+            wf_id = wf["id"]
+            check(client.put(f"/workflow/{wf_id}", json={
+                "workflow_definition": definition(doc_uuid),
+                "workflow_configurations": CONFIGURATIONS,
+                "template_context_variables": TEMPLATE_VARIABLES,
+            }))
+        check(client.post(f"/workflow/{wf_id}/publish",
+                          json={"version_name": version, "change_description": description}))
+        verb = "updated and published" if os.environ.get("DOGRAH_WORKFLOW_ID") else "created and published"
+        print(f"workflow {wf_id} {verb}: {NAME}")
 
 
 if __name__ == "__main__":
