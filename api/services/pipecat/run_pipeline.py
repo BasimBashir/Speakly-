@@ -771,6 +771,9 @@ async def _run_pipeline_impl(
     if hasattr(call_direction, "value"):
         call_direction = call_direction.value
     call_direction = call_direction or merged_call_context_vars.get("direction")
+    # Lets one workflow serve both directions: prompts can use {{call_direction}}.
+    if call_direction:
+        merged_call_context_vars.setdefault("call_direction", call_direction)
     if (
         start_node
         and start_node.should_run_pre_call_fetch(call_direction)
