@@ -308,7 +308,7 @@ export function PhoneNumberDialog({
               <p className="text-xs text-muted-foreground">
                 {trunks.length > 1
                   ? "Calls from this number leave on this trunk. Pick the one whose carrier authorised the number — carriers reject a caller ID they do not own."
-                  : "Calls from this number leave on this trunk. With a single trunk Dograh falls back to it anyway."}
+                  : "Calls from this number leave on this trunk. With a single trunk Speakly falls back to it anyway."}
               </p>
             </div>
           )}

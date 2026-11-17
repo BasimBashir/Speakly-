@@ -6,6 +6,7 @@ import { GitHubStarBadge } from '@/components/layout/GitHubStarBadge';
 import { PageLayout } from '@/components/layout/PageLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { SPEAKLY_REPO_URL } from '@/constants/speakly';
 import { useAuth } from '@/lib/auth';
 
 export default function OverviewPage() {
@@ -64,7 +65,7 @@ export default function OverviewPage() {
                     <div className="flex flex-wrap gap-4">
                         <Button asChild variant="outline">
                             <a
-                                href="https://docs.dograh.com"
+                                href={`${SPEAKLY_REPO_URL}#readme`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                             >
@@ -73,7 +74,7 @@ export default function OverviewPage() {
                         </Button>
                         <Button asChild variant="outline">
                             <a
-                                href="https://github.com/dograh-hq/dograh/issues"
+                                href={`${SPEAKLY_REPO_URL}/issues`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                             >

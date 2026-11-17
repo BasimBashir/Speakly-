@@ -56,7 +56,7 @@ function BigQueryFields({ config, onChange, deploymentIdentityAvailable }: Desti
             <p className="text-sm text-muted-foreground">Saved keys are masked. Leave the masked value unchanged to keep the current key.</p>
           </div>
         </>
-      ) : <p className="text-sm text-muted-foreground">Uses the Google identity configured on your Dograh server.</p>}
+      ) : <p className="text-sm text-muted-foreground">Uses the Google identity configured on your Speakly server.</p>}
       <p className="text-sm text-muted-foreground">The identity needs permission to read the table schema and insert rows.</p>
     </div>
   );

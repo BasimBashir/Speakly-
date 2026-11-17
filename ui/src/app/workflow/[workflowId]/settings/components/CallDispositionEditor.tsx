@@ -177,7 +177,7 @@ export function CallDispositionEditor({
                     </Label>
                     <p className="text-xs text-muted-foreground">
                         {enabled
-                            ? `${rows.length} outcome${rows.length === 1 ? "" : "s"} configured. Dograh will classify the completed conversation into one of them.`
+                            ? `${rows.length} outcome${rows.length === 1 ? "" : "s"} configured. Speakly will classify the completed conversation into one of them.`
                             : "Disabled. Speakly will keep the disposition recorded by the call-ending event."}
                     </p>
                 </div>
