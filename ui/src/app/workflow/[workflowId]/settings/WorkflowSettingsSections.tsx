@@ -718,14 +718,12 @@ function GeneralSection({
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="english">English</SelectItem>
-                                <SelectItem value="urdu">Urdu</SelectItem>
-                                <SelectItem value="hindi">Hindi</SelectItem>
                             </SelectContent>
                         </Select>
                         <p className="text-xs text-muted-foreground">
                             {conversationLanguage === "english"
                                 ? "Uses the org Model Configuration as-is."
-                                : "Overrides this agent to reply in, transcribe, and speak the selected language (self-hosted Indic models)."}
+                                : "Overrides this agent to reply in, transcribe, and speak the selected language."}
                         </p>
                     </div>
                 </div>

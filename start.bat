@@ -100,13 +100,12 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-REM indic-stt / xtts-urdu bake big (gated) HF weights into the image, so they
-REM are NOT in devcontainer runServices: `devcontainer up` rebuilds every
-REM runService, and once Docker GCs the build cache that re-download fails
-REM without an HF token. `compose up` only builds when the image is missing.
-docker compose -f docker-compose-local.yaml up -d indic-stt xtts-urdu
+REM parakeet-stt (default speech-to-text) bakes its weights into the image, so it
+REM is NOT in devcontainer runServices: `devcontainer up` rebuilds every
+REM runService. `compose up` only builds when the image is missing.
+docker compose -f docker-compose-local.yaml up -d parakeet-stt
 if errorlevel 1 (
-    echo [ERROR] Failed to start indic-stt / xtts-urdu. See output above.
+    echo [ERROR] Failed to start parakeet-stt. See output above.
     pause
     exit /b 1
 )

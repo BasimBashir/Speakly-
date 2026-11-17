@@ -1315,7 +1315,7 @@ class WorkflowConfigurationDefaults(BaseModel):
     ] = 10.0
     smart_turn_stop_secs: Annotated[
         float | None, Field(title='Smart Turn Stop Secs')
-    ] = 2.0
+    ] = 1.0
     turn_start_strategy: Annotated[
         TurnStartStrategy | None, Field(title='Turn Start Strategy')
     ] = 'min_words'
@@ -1324,7 +1324,7 @@ class WorkflowConfigurationDefaults(BaseModel):
     ] = 2
     turn_stop_strategy: Annotated[
         TurnStopStrategy | None, Field(title='Turn Stop Strategy')
-    ] = 'transcription'
+    ] = 'turn_analyzer'
     dictionary: Annotated[str | None, Field(title='Dictionary')] = ''
     context_compaction_enabled: Annotated[
         bool | None, Field(title='Context Compaction Enabled')

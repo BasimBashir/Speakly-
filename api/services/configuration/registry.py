@@ -107,14 +107,12 @@ class ServiceProviders(str, Enum):
     CAMB = "camb"
     AWS_BEDROCK = "aws_bedrock"
     SPEACHES = "speaches"
-    INDIC_CONFORMER = "indic_conformer"
     HUGGINGFACE = "huggingface"
     ASSEMBLYAI = "assemblyai"
     GLADIA = "gladia"
     RIME = "rime"
     MINIMAX = "minimax"
     PIPER = "piper"
-    XTTS_URDU = "xtts_urdu"
     GOOGLE_VERTEX = "google_vertex"
     OPENAI_REALTIME = "openai_realtime"
     GROK_REALTIME = "grok_realtime"
@@ -474,30 +472,10 @@ PIPER_PROVIDER = Provider(
     "piper",
     "Local Models (Piper)",
     description=(
-        "Self-hosted Piper neural TTS (CPU). Ships an Urdu voice (ur_PK-fasih); "
-        "add more Piper voices in the piper-tts container."
+        "Self-hosted Piper neural TTS (CPU). Ships German and Dutch voices, the "
+        "EU languages Kokoro lacks; add more Piper voices in the piper-tts container."
     ),
     provider_docs_url="https://github.com/OHF-Voice/piper1-gpl",
-)
-XTTS_URDU_PROVIDER = Provider(
-    "xtts_urdu",
-    "Local Models (XTTS Urdu)",
-    description=(
-        "Self-hosted XTTS-v2 fine-tuned for Urdu — a cleaner, voice-cloned male "
-        "Urdu voice (GPU). Served by the xtts-urdu container. Higher latency than "
-        "Piper; Piper remains the low-latency fallback."
-    ),
-    provider_docs_url="https://huggingface.co/suhaibrashid17/XTTS-v2-Urdu-FT",
-)
-INDIC_CONFORMER_PROVIDER = Provider(
-    "indic_conformer",
-    "Local Models (IndicConformer)",
-    description=(
-        "Self-hosted AI4Bharat IndicConformer ASR for Urdu, Hindi and 20 other "
-        "Indian languages (code-mix aware). Served OpenAI-compatibly by the "
-        "indic-stt container."
-    ),
-    provider_docs_url="https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual",
 )
 HUGGINGFACE_PROVIDER = Provider(
     "huggingface",
@@ -1829,15 +1807,23 @@ class SpeachesTTSConfiguration(BaseTTSConfiguration):
     )
 
 
-PIPER_TTS_VOICES = ["ur_PK-fasih-medium"]
+PIPER_TTS_VOICES = [
+    # German/Dutch: languages Kokoro does not cover.
+    "de_DE-thorsten-high",
+    "de_DE-thorsten_emotional-medium",
+    "de_DE-kerstin-low",
+    "nl_NL-mls-medium",
+    "nl_BE-nathalie-medium",
+    "nl_BE-rdh-medium",
+]
 
 
 @register_tts(provider=PIPER_PROVIDER)
 class PiperTTSConfiguration(BaseTTSConfiguration):
     provider: Literal[ServiceProviders.PIPER] = ServiceProviders.PIPER
     model: str = Field(
-        default="ur_PK-fasih-medium",
-        description="Piper voice id served by the piper-tts container (e.g. ur_PK-fasih-medium).",
+        default="de_DE-thorsten-high",
+        description="Piper voice id served by the piper-tts container (e.g. de_DE-thorsten-high).",
         json_schema_extra={
             "examples": PIPER_TTS_VOICES,
             "allow_custom_input": True,
@@ -1850,24 +1836,6 @@ class PiperTTSConfiguration(BaseTTSConfiguration):
     api_key: str | list[str] | None = Field(
         default=None,
         description="Not required for the self-hosted Piper server. Leave blank.",
-    )
-
-
-@register_tts(provider=XTTS_URDU_PROVIDER)
-class XTTSUrduTTSConfiguration(BaseTTSConfiguration):
-    provider: Literal[ServiceProviders.XTTS_URDU] = ServiceProviders.XTTS_URDU
-    model: str = Field(
-        default="xtts-v2-urdu-ft",
-        description="Fixed XTTS-Urdu model served by the xtts-urdu container.",
-        json_schema_extra={"examples": ["xtts-v2-urdu-ft"]},
-    )
-    base_url: str = Field(
-        default="http://xtts-urdu:8000",
-        description="XTTS-Urdu HTTP server base URL (POST /tts -> WAV).",
-    )
-    api_key: str | list[str] | None = Field(
-        default=None,
-        description="Not required for the self-hosted XTTS-Urdu server. Leave blank.",
     )
 
 
@@ -2143,7 +2111,6 @@ TTSConfig = Annotated[
         RimeTTSConfiguration,
         SpeachesTTSConfiguration,
         PiperTTSConfiguration,
-        XTTSUrduTTSConfiguration,
         MiniMaxTTSConfiguration,
         AzureSpeechTTSConfiguration,
         SmallestAITTSConfiguration,
@@ -2389,24 +2356,22 @@ class SpeechmaticsSTTConfiguration(BaseSTTConfiguration):
 
 
 SPEACHES_STT_MODELS = [
-    # Default is distil-large-v3: accurate English STT, still distilled/faster
-    # than the full multilingual large-v3. distil-small.en is the lowest-latency
-    # option but noticeably less accurate (it garbled real speech in testing and
-    # caused tool misfires) — only pick it if latency truly outweighs accuracy.
-    # Urdu/Hindi agents use IndicConformer via the conversation-language profile,
-    # so this Speaches default only serves English agents.
+    # Default is large-v3-turbo: as accurate as large-v3 on 8 kHz phone audio in
+    # EN/ES/DE/FR/IT/PT/NL at ~half the latency (evals/local_stack). The distil
+    # models are English-only in practice (>100% WER on the other languages).
+    "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "Systran/faster-whisper-large-v3",
     "Systran/faster-distil-whisper-large-v3",
     "Systran/faster-distil-whisper-small.en",
-    "Systran/faster-whisper-large-v3",
 ]
-SPEACHES_STT_LANGUAGES = ["en", "ur", "hi", "ar", "nl", "fr", "de", "it", "pt", "es"]
+SPEACHES_STT_LANGUAGES = ["en", "es", "de", "fr", "it", "pt", "nl", "ar"]
 
 
 @register_stt(provider=SPEACHES_PROVIDER)
 class SpeachesSTTConfiguration(BaseSTTConfiguration):
     provider: Literal[ServiceProviders.SPEACHES] = ServiceProviders.SPEACHES
     model: str = Field(
-        default="Systran/faster-distil-whisper-large-v3",
+        default="deepdml/faster-whisper-large-v3-turbo-ct2",
         description="Whisper model identifier as served by your STT endpoint.",
         json_schema_extra={
             "examples": SPEACHES_STT_MODELS,
@@ -2425,60 +2390,9 @@ class SpeachesSTTConfiguration(BaseSTTConfiguration):
         default="http://speaches:8000/v1",
         description="OpenAI-compatible STT endpoint (Speaches, etc.).",
     )
-    output_script: str = Field(
-        default="native",
-        description=(
-            "Transcript display script: 'native' (e.g. Urdu/Devanagari) or "
-            "'roman' (romanized for display, e.g. 'kya haal hai')."
-        ),
-        json_schema_extra={"examples": ["native", "roman"]},
-    )
     api_key: str | list[str] | None = Field(
         default=None,
         description="Usually not required for self-hosted STT. Leave blank unless enforced.",
-    )
-
-
-INDIC_CONFORMER_STT_MODELS = ["ai4bharat/indic-conformer-600m-multilingual"]
-INDIC_CONFORMER_STT_LANGUAGES = ["ur", "hi", "bn", "gu", "kn", "ml", "mr", "pa", "ta", "te"]
-
-
-@register_stt(provider=INDIC_CONFORMER_PROVIDER)
-class IndicConformerSTTConfiguration(BaseSTTConfiguration):
-    provider: Literal[ServiceProviders.INDIC_CONFORMER] = (
-        ServiceProviders.INDIC_CONFORMER
-    )
-    model: str = Field(
-        default="ai4bharat/indic-conformer-600m-multilingual",
-        description="IndicConformer model served by the indic-stt container.",
-        json_schema_extra={
-            "examples": INDIC_CONFORMER_STT_MODELS,
-            "allow_custom_input": True,
-        },
-    )
-    language: str = Field(
-        default="ur",
-        description="ISO 639-1 language code (ur=Urdu, hi=Hindi, ...).",
-        json_schema_extra={
-            "examples": INDIC_CONFORMER_STT_LANGUAGES,
-            "allow_custom_input": True,
-        },
-    )
-    base_url: str = Field(
-        default="http://indic-stt:8000/v1",
-        description="OpenAI-compatible STT endpoint served by the indic-stt container.",
-    )
-    output_script: str = Field(
-        default="native",
-        description=(
-            "Transcript display script: 'native' (e.g. Urdu/Devanagari) or "
-            "'roman' (romanized for display, e.g. 'kya haal hai')."
-        ),
-        json_schema_extra={"examples": ["native", "roman"]},
-    )
-    api_key: str | list[str] | None = Field(
-        default=None,
-        description="Not required for the self-hosted indic-stt server. Leave blank.",
     )
 
 
@@ -2690,7 +2604,6 @@ STTConfig = Annotated[
         SpeechmaticsSTTConfiguration,
         SarvamSTTConfiguration,
         SpeachesSTTConfiguration,
-        IndicConformerSTTConfiguration,
         HuggingFaceSTTConfiguration,
         AssemblyAISTTConfiguration,
         GladiaSTTConfiguration,

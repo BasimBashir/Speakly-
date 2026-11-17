@@ -1,0 +1,4 @@
+# Regenerable bench outputs: downloaded test clips, per-run results, run logs.
+data/
+results/
+*.log

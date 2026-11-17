@@ -22,10 +22,15 @@ DEFAULT_MAX_CALL_DURATION_SECONDS = 300
 # its slot purged as stale and the org concurrency limit under-counts.
 MAX_CALL_DURATION_SECONDS = 1200
 DEFAULT_MAX_USER_IDLE_TIMEOUT_SECONDS = 10.0
-DEFAULT_SMART_TURN_STOP_SECS = 2.0
+# Max wait when Smart Turn judges the caller unfinished. 1.0 s keeps the
+# average turn-end wait at 0.27-0.49 s in EN/ES/DE/FR/IT/PT/NL (2.0 s made
+# missed EN turns average 0.8 s) while still riding out short mid-thought pauses.
+DEFAULT_SMART_TURN_STOP_SECS = 1.0
 DEFAULT_TURN_START_STRATEGY = "min_words"
 DEFAULT_TURN_START_MIN_WORDS = 2
-DEFAULT_TURN_STOP_STRATEGY = "transcription"
+# Smart Turn v3 ends the turn ~0.2 s after speech when the utterance sounds
+# complete, vs a fixed 0.8 s silence wait, and waits through mid-thought pauses.
+DEFAULT_TURN_STOP_STRATEGY = "turn_analyzer"
 DEFAULT_CONTEXT_COMPACTION_ENABLED = False
 MAX_CALL_DISPOSITIONS = 50
 MAX_CALL_DISPOSITION_CODE_LENGTH = 64

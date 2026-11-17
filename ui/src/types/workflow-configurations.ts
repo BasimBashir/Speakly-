@@ -127,7 +127,7 @@ export type WorkflowConfigurations = WorkflowConfigurationBase & {
     voicemail_detection?: VoicemailDetectionConfiguration;
     transcript_configuration: TranscriptConfiguration;
     context_compaction_enabled: boolean;  // Summarize context on node transitions to remove stale tool calls
-    conversation_language?: string;  // Per-agent language (english/urdu/hindi/...) that wires reply prompt + STT + TTS
+    conversation_language?: string;  // Per-agent language that wires reply prompt + STT + TTS
     tts_cache_enabled: boolean;
     call_dispositions: CallDispositionOption[];  // Allowed terminal business outcomes
     text_chat_inactivity_timeout_seconds?: number;  // End inactive text chats after this many seconds
@@ -144,10 +144,10 @@ const FALLBACK_WORKFLOW_CONFIGURATIONS: WorkflowConfigurations = {
     },
     max_call_duration: 300,
     max_user_idle_timeout: 10,  // 10 seconds
-    smart_turn_stop_secs: 2,  // 2 seconds
+    smart_turn_stop_secs: 1,  // max wait (s) when Smart Turn judges the caller unfinished
     turn_start_strategy: DEFAULT_TURN_START_STRATEGY,
     turn_start_min_words: DEFAULT_TURN_START_MIN_WORDS,
-    turn_stop_strategy: 'transcription',  // Default to transcription-based detection
+    turn_stop_strategy: 'turn_analyzer',  // Smart Turn v3: faster, waits through mid-thought pauses
     dictionary: '',
     transcript_configuration: DEFAULT_TRANSCRIPT_CONFIGURATION,
     context_compaction_enabled: false,

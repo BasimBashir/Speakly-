@@ -703,7 +703,7 @@ export const getDefaultConfigurationsApiV1UserConfigurationsDefaultsGet = <Throw
 /**
  * Get Conversation Languages
  *
- * List the per-agent conversation languages (English/Urdu/Hindi/...).
+ * List the per-agent conversation languages.
  */
 export const getConversationLanguagesApiV1UserConfigurationsConversationLanguagesGet = <ThrowOnError extends boolean = false>(options?: Options<GetConversationLanguagesApiV1UserConfigurationsConversationLanguagesGetData, ThrowOnError>): RequestResult<GetConversationLanguagesApiV1UserConfigurationsConversationLanguagesGetResponses, GetConversationLanguagesApiV1UserConfigurationsConversationLanguagesGetErrors, ThrowOnError> => (options?.client ?? client).get<GetConversationLanguagesApiV1UserConfigurationsConversationLanguagesGetResponses, GetConversationLanguagesApiV1UserConfigurationsConversationLanguagesGetErrors, ThrowOnError>({ url: '/api/v1/user/configurations/conversation-languages', ...options });
 

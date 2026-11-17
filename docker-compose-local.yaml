@@ -214,6 +214,10 @@ services:
       - "127.0.0.1:8004:8000"
     volumes:
       - speaches_cache:/home/ubuntu/.cache/huggingface
+    environment:
+      # Never offload the Whisper model: the default 300s idle TTL made the first
+      # turn after idle pay a reload, and unload->reload has wedged transcription.
+      - WHISPER__TTL=-1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -247,7 +251,7 @@ services:
         for i in $$(seq 1 60); do
           if curl -sf http://speaches:8000/health > /dev/null 2>&1; then
             echo "Speaches up. Pre-downloading Whisper model..."
-            curl -sS -X POST "http://speaches:8000/v1/models/Systran%2Ffaster-distil-whisper-large-v3"
+            curl -sS -X POST "http://speaches:8000/v1/models/deepdml%2Ffaster-whisper-large-v3-turbo-ct2"
             echo ""
             echo "Whisper model ready."
             exit 0
@@ -261,7 +265,7 @@ services:
       - app-network
 
   # ---------------------------------------------------------------------------
-  # TTS — Piper HTTP server for self-hosted Urdu voice (ur_PK-fasih).
+  # TTS — Piper HTTP server for German/Dutch voices (the EU languages Kokoro lacks).
   # Additive, optional Voice provider (CPU-only, no GPU/VRAM). Selected per
   # workflow in Model Configuration; does NOT affect the default Kokoro TTS.
   # Speaks pipecat's PiperHttpTTSService contract (POST / {"text"} -> WAV).
@@ -281,46 +285,23 @@ services:
       - app-network
 
   # ---------------------------------------------------------------------------
-  # STT — AI4Bharat IndicConformer (Urdu/Hindi/Indic), OpenAI-compatible.
-  # Additive, optional Transcriber provider (CPU-only). Selected per workflow;
-  # does NOT affect the default Speaches/Whisper STT.
-  # NOTE: the model is a GATED HF repo. The image here is pre-built with the
-  # weights baked in (and the build layer is cached), so normal start.bat runs
-  # need no token. A *cold* rebuild (pruned cache) requires the token:
-  #   HF_TOKEN=hf_xxx docker build --secret id=hf_token,env=HF_TOKEN \
-  #     -t dograh-indic-stt ./docker/indic-stt
+  # STT — NVIDIA Parakeet TDT 0.6B v3 (25 European languages), OpenAI-compatible.
+  # Default transcriber: ~0.15 s per turn on GPU vs ~0.33 s for Whisper-turbo,
+  # same accuracy, and it keeps up with 4 concurrent calls (evals/local_stack).
+  # Selected via a Speaches-type provider connection with base_url
+  # http://parakeet-stt:8000/v1. Ungated weights are baked in at build.
   # ---------------------------------------------------------------------------
-  indic-stt:
+  parakeet-stt:
     build:
-      context: ./docker/indic-stt
-    ports:
-      - "127.0.0.1:8006:8000"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost',8000),timeout=3)\""]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-    networks:
-      - app-network
-
-  # ---------------------------------------------------------------------------
-  # TTS — XTTS-v2 fine-tuned for Urdu (voice-cloned male Urdu, GPU). Cleaner
-  # than Piper; used by the Urdu conversation-language profile. Additive,
-  # optional; Piper remains the CPU low-latency fallback. Build-only image
-  # (model baked in) so start.bat's pull skips it.
-  # ---------------------------------------------------------------------------
-  xtts-urdu:
-    build:
-      context: ./docker/xtts-urdu
+      context: ./docker/parakeet-stt
     ports:
       - "127.0.0.1:8007:8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost',8000),timeout=3)\""]
       interval: 30s
       timeout: 10s
-      retries: 10
-      start_period: 180s  # model load on GPU can take a couple minutes
+      retries: 5
+      start_period: 60s
     deploy:
       resources:
         reservations:

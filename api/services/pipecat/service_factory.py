@@ -44,7 +44,6 @@ from api.services.pipecat.murf_tts import MurfTTSService
 from api.services.pipecat.openai_spoken_tool_calls import OpenAISpokenToolCallMixin
 from api.services.pipecat.piper_tts import PiperOwnedSessionTTSService
 from api.services.pipecat.spoken_tool_calls import SpokenToolCallMixin
-from api.services.pipecat.xtts_tts import XTTSUrduTTSService
 from api.utils.url_security import validate_user_configured_service_url
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameProcessorSetup
@@ -526,7 +525,7 @@ def _stt_configurable_settings(config, *, for_update: bool = False) -> dict[str,
             return {"language": Language(language)}
         except ValueError:
             return {"language": language}
-    if provider in {ServiceProviders.SPEACHES, ServiceProviders.INDIC_CONFORMER}:
+    if provider == ServiceProviders.SPEACHES:
         return {"language": language}
     if provider == ServiceProviders.HUGGINGFACE:
         return {"return_timestamps": getattr(config, "return_timestamps", False)}
@@ -788,19 +787,6 @@ def create_stt_service(
             base_url=base_url,
             bill_to=getattr(user_config.stt, "bill_to", None),
             settings=HuggingFaceSTTSettings(
-                model=user_config.stt.model,
-                **configurable_settings,
-            ),
-            sample_rate=audio_config.transport_in_sample_rate,
-        )
-    elif user_config.stt.provider == ServiceProviders.INDIC_CONFORMER.value:
-        # Self-hosted IndicConformer served OpenAI-compatibly by the indic-stt
-        # container; reuse the same client as Speaches.
-        _validate_runtime_service_url(user_config.stt.base_url, "base_url")
-        return SpeachesSTTService(
-            base_url=user_config.stt.base_url,
-            api_key=user_config.stt.api_key or "none",
-            settings=SpeachesSTTSettings(
                 model=user_config.stt.model,
                 **configurable_settings,
             ),
@@ -1366,17 +1352,6 @@ def create_tts_service(
             base_url=user_config.tts.base_url,
             aiohttp_session=session,
             voice=user_config.tts.model,
-            skip_text_types=["recording_router", "recording"],
-            silence_time_s=1.0,
-        )
-    elif user_config.tts.provider == ServiceProviders.XTTS_URDU.value:
-        # Self-hosted XTTS-Urdu HTTP server (GPU). Cleaner voice-cloned Urdu;
-        # base_url is the server root (POST /tts -> WAV).
-        _validate_runtime_service_url(user_config.tts.base_url, "base_url")
-        session = aiohttp.ClientSession()
-        return XTTSUrduTTSService(
-            base_url=user_config.tts.base_url,
-            aiohttp_session=session,
             skip_text_types=["recording_router", "recording"],
             silence_time_s=1.0,
         )

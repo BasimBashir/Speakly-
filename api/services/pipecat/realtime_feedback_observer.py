@@ -100,7 +100,6 @@ class RealtimeFeedbackObserver(BaseObserver):
         logs_buffer: Optional["InMemoryLogsBuffer"] = None,
         selected_visit: Callable[[], str | None] | None = None,
         call_event_recorder: "CallEventRecorder | None" = None,
-        romanize_lang: Optional[str] = None,
     ):
         """
         Args:
@@ -108,10 +107,6 @@ class RealtimeFeedbackObserver(BaseObserver):
                        Expected signature: async def send(message: dict) -> None
             logs_buffer: Optional InMemoryLogsBuffer to persist events for post-call analysis.
             selected_visit: Agent visit currently allowed to speak on the call.
-            romanize_lang: When set (e.g. "ur"/"hi"), the displayed transcript text
-                is romanized to Latin for the live UI (native script -> "kya haal hai").
-                Display-only; never affects the LLM context or TTS audio. When None,
-                text is shown as-is.
         """
         super().__init__()
         self._ws_sender = ws_sender
@@ -119,15 +114,6 @@ class RealtimeFeedbackObserver(BaseObserver):
         self._selected_visit = selected_visit
         self._call_event_recorder = call_event_recorder
         self._frames_seen: set[int] = set()
-        self._romanize_lang = romanize_lang
-
-    def _disp(self, text: str) -> str:
-        """Romanize text for display when romanize_lang is set; else return as-is."""
-        if not self._romanize_lang or not text:
-            return text
-        from api.services.transliteration.romanize import to_roman
-
-        return to_roman(text, self._romanize_lang)
 
     async def log_speech(self, text: str):
         """Persist speech that is intentionally excluded from assistant context."""
@@ -136,7 +122,7 @@ class RealtimeFeedbackObserver(BaseObserver):
         # Queued announcements can be logged before reaching the TTS service.
         text = await SpokenTextTransform()(text, "sentence")
         if text.strip():
-            await self._append_to_buffer(build_bot_text_event(text=self._disp(text)))
+            await self._append_to_buffer(build_bot_text_event(text=text))
 
     def speech_log_context(self) -> dict:
         if self._logs_buffer is None:
@@ -279,7 +265,7 @@ class RealtimeFeedbackObserver(BaseObserver):
         elif isinstance(frame, InterimTranscriptionFrame):
             await self._send_ws(
                 build_user_transcription_event(
-                    text=self._disp(frame.text),
+                    text=frame.text,
                     final=False,
                     user_id=frame.user_id,
                     timestamp=frame.timestamp,
@@ -290,7 +276,7 @@ class RealtimeFeedbackObserver(BaseObserver):
         elif isinstance(frame, TranscriptionFrame):
             await self._send_ws(
                 build_user_transcription_event(
-                    text=self._disp(frame.text),
+                    text=frame.text,
                     final=True,
                     user_id=frame.user_id,
                     timestamp=frame.timestamp,
@@ -308,7 +294,7 @@ class RealtimeFeedbackObserver(BaseObserver):
         # except for frames explicitly flagged persist_to_logs (e.g. recording
         # transcripts from play_audio) which bypass the aggregator path.
         elif isinstance(frame, TTSTextFrame):
-            message = build_bot_text_event(text=self._disp(frame.text))
+            message = build_bot_text_event(text=frame.text)
 
             if getattr(frame, "persist_to_logs", False):
                 await self._send_message(message)

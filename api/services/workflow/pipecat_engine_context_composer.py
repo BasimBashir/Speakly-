@@ -50,6 +50,13 @@ RULES:
 - Use ▸ when you need to generate a dynamic, contextual response.
 - *NEVER* mix modes in a single response, since we rely on the markers to decide whether to play using TTS or Pre-recorded audio."""
 
+TOOL_PREFERENCE_INSTRUCTION = (
+    "When the caller's latest message satisfies a function's description, "
+    "call that function instead of replying in text. This includes goodbyes: "
+    "if a function ends the call, call it rather than saying goodbye yourself, "
+    "because the next step speaks for you."
+)
+
 KB_INDEX_PROMPT_BUDGET_CHARS = int(
     os.environ.get("KB_INDEX_PROMPT_BUDGET_CHARS", "32000")
 )
@@ -144,12 +151,17 @@ async def compose_system_prompt_for_node(
     parts = [p for p in (global_prompt, formatted_node_prompt) if p]
 
     # Per-agent conversation language: instruct the model to reply in the chosen
-    # language (no-op for English). This is what makes an Urdu agent reply in Urdu.
+    # language (no-op for English).
     from api.services.configuration.conversation_language import get_profile
 
     reply_instruction = get_profile(conversation_language).reply_instruction
     if reply_instruction:
         parts.append(reply_instruction)
+
+    # Small local models otherwise answer "goodbye" in text and never call end_call
+    # (evals/local_stack bench: 88% -> 100% tool accuracy in EN/ES/DE/FR).
+    if not node.is_end and (node.out_edges or node.tool_uuids or node.document_uuids):
+        parts.append(TOOL_PREFERENCE_INSTRUCTION)
 
     recording_enabled = has_recordings and "RECORDING_ID:" in formatted_node_prompt
     if recording_enabled:

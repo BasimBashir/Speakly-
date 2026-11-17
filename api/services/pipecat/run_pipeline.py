@@ -17,6 +17,7 @@ from api.schemas.workflow_configurations import (
     DEFAULT_SMART_TURN_STOP_SECS,
     DEFAULT_TURN_START_MIN_WORDS,
     DEFAULT_TURN_START_STRATEGY,
+    DEFAULT_TURN_STOP_STRATEGY,
     WorkflowConfigurationDefaults,
 )
 from api.services.call_concurrency import call_concurrency
@@ -247,7 +248,10 @@ def _create_non_realtime_user_turn_stop_strategies(
     if uses_external_turns:
         return [ExternalUserTurnStopStrategy()]
 
-    if run_configs.get("turn_stop_strategy") == "turn_analyzer":
+    if (
+        run_configs.get("turn_stop_strategy", DEFAULT_TURN_STOP_STRATEGY)
+        == "turn_analyzer"
+    ):
         smart_turn_params = SmartTurnParams(
             stop_secs=run_configs.get(
                 "smart_turn_stop_secs", DEFAULT_SMART_TURN_STOP_SECS
@@ -1217,16 +1221,6 @@ async def _run_pipeline_impl(
             task, user_context_aggregator, call_monitor_processor
         )
 
-    # When the STT is configured with output_script="roman", romanize the live
-    # transcript for display only (native script -> "kya haal hai"); never affects
-    # the LLM context or TTS audio.
-    _stt_cfg = getattr(user_config, "stt", None)
-    _romanize_lang = (
-        getattr(_stt_cfg, "language", None)
-        if _stt_cfg is not None
-        and getattr(_stt_cfg, "output_script", "native") == "roman"
-        else None
-    )
     # Share frame-ID deduplication across the call and all agent workers.
     feedback_observer = RealtimeFeedbackObserver(
         ws_sender=ws_sender,
@@ -1235,7 +1229,6 @@ async def _run_pipeline_impl(
         call_event_recorder=(
             call_events_session.recorder if call_events_session else None
         ),
-        romanize_lang=_romanize_lang,
     )
     task.add_observer(feedback_observer)
     engine.greeting.log_speech = feedback_observer.log_greeting

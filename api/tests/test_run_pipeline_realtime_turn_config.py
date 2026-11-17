@@ -247,9 +247,25 @@ def test_non_realtime_uses_external_stop_for_external_turn_stt():
     assert isinstance(strategies[0], ExternalUserTurnStopStrategy)
 
 
-def test_non_realtime_default_uses_speech_timeout_stop():
+def test_non_realtime_default_uses_turn_analyzer_stop(monkeypatch):
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "LocalSmartTurnAnalyzerV3",
+        lambda *, params: params,
+    )
+
     strategies = _create_non_realtime_user_turn_stop_strategies(
         {},
+        uses_external_turns=False,
+    )
+
+    assert len(strategies) == 1
+    assert isinstance(strategies[0], TurnAnalyzerUserTurnStopStrategy)
+
+
+def test_non_realtime_transcription_uses_speech_timeout_stop():
+    strategies = _create_non_realtime_user_turn_stop_strategies(
+        {"turn_stop_strategy": "transcription"},
         uses_external_turns=False,
     )
 

@@ -7,15 +7,21 @@ from api.services.configuration.ai_model_configuration import (
 )
 
 
-def test_supported_languages_includes_core():
+def test_supported_languages_includes_english():
     codes = {l["code"] for l in cl.supported_languages()}
-    assert {"english", "urdu", "hindi"} <= codes
+    assert "english" in codes
 
 
 def test_get_profile_fallback_to_english():
     assert cl.get_profile(None).code == "english"
     assert cl.get_profile("klingon").code == "english"
-    assert cl.get_profile("URDU").code == "urdu"  # case-insensitive
+    assert cl.get_profile("ENGLISH").code == "english"  # case-insensitive
+
+
+def test_removed_urdu_hindi_fall_back_to_english():
+    # Workflows saved while Urdu/Hindi existed must still run, as English.
+    assert cl.get_profile("urdu").code == "english"
+    assert cl.get_profile("hindi").code == "english"
 
 
 def test_english_profile_is_noop():
@@ -24,20 +30,8 @@ def test_english_profile_is_noop():
     assert p.stt_override is None and p.tts_override is None
 
 
-def test_urdu_profile_has_overrides_and_instruction():
-    p = cl.get_profile("urdu")
-    assert "Urdu" in p.reply_instruction
-    assert p.stt_override["provider"] == "indic_conformer"
-    assert p.stt_override["language"] == "ur"
-    assert p.tts_override["provider"] == "xtts_urdu"
-
-
-def test_overlay_applies_urdu_and_is_noop_for_english():
+def test_overlay_is_noop_for_english_and_removed_languages():
     base = EffectiveAIModelConfiguration()  # empty org config
-    urdu = _apply_conversation_language(base, "urdu")
-    assert urdu.stt is not None and urdu.stt.provider.value == "indic_conformer"
-    assert urdu.tts is not None and urdu.tts.provider.value == "xtts_urdu"
-
-    # English / unknown leave the config untouched (same object semantics)
     assert _apply_conversation_language(base, "english") is base
     assert _apply_conversation_language(base, None) is base
+    assert _apply_conversation_language(base, "urdu") is base
