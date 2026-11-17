@@ -179,7 +179,7 @@ def definition(document_uuid: str) -> dict:
 CONFIGURATIONS = {
     "max_call_duration": 600,
     "turn_stop_strategy": "turn_analyzer",
-    "smart_turn_stop_secs": 1.0,
+    "smart_turn_stop_secs": 0.8,
     "conversation_language": "english",
     "call_dispositions": [
         {"code": "demo_requested", "description": "The person agreed to a demo or call with the founder."},
