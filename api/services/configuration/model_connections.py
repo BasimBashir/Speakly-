@@ -735,10 +735,7 @@ async def validate_embedding_compatibility(
         raise _invalid(
             "Selected knowledge-base documents require an embedding configuration"
         )
-    if any(
-        space["model"] != embeddings.model or space["dimension"] != 1536
-        for space in spaces
-    ):
+    if any(space["model"] != embeddings.model for space in spaces):
         raise _invalid(
             "Embedding configuration does not match existing document indexes. Select a compatible configuration or explicitly reindex those documents before changing embedding models."
         )

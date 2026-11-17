@@ -598,9 +598,10 @@ async def test_embedding_index_compatibility_checks_only_selected_documents(
     lookup.return_value = [{"model": "older-model", "dimension": 1536}]
     with pytest.raises(HTTPException, match="does not match"):
         await service.validate_embedding_compatibility(1, effective)
-    lookup.return_value = [{"model": "text-embedding-3-small", "dimension": 384}]
-    with pytest.raises(HTTPException, match="does not match"):
-        await service.validate_embedding_compatibility(1, effective)
+    lookup.return_value = [{"model": "text-embedding-3-small", "dimension": 1024}]
+    # A same-model index at another dimension still queries fine; the query
+    # embedding is truncated/padded by pgvector at 1024 (fork migration a1b2c3d4e5f7).
+    await service.validate_embedding_compatibility(1, effective)
 
 
 @pytest.mark.asyncio
