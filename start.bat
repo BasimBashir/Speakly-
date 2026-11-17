@@ -94,18 +94,13 @@ echo [STEP 2/6] Bringing up devcontainer + GPU model services...
 echo            First run also builds the workspace image and can take 15-30 min.
 echo            Subsequent runs start in under a minute.
 echo.
+REM parakeet-stt (default speech-to-text) is started in step 6, only once vLLM is
+REM healthy: vLLM refuses to boot unless 0.72 of the GPU is free, and Parakeet
+REM holds ~3 GB. Stop a leftover instance so it can't win that race.
+docker compose -f docker-compose-local.yaml stop parakeet-stt >nul 2>&1
 call devcontainer up --workspace-folder .
 if errorlevel 1 (
     echo [ERROR] devcontainer up failed. See output above.
-    pause
-    exit /b 1
-)
-REM parakeet-stt (default speech-to-text) bakes its weights into the image, so it
-REM is NOT in devcontainer runServices: `devcontainer up` rebuilds every
-REM runService. `compose up` only builds when the image is missing.
-docker compose -f docker-compose-local.yaml up -d parakeet-stt
-if errorlevel 1 (
-    echo [ERROR] Failed to start parakeet-stt. See output above.
     pause
     exit /b 1
 )
@@ -169,14 +164,26 @@ set /a model_attempts=0
 set /a model_attempts+=1
 call :get_health vllm
 set "S_VLLM=!RESULT!"
+REM Start Parakeet once vLLM holds its GPU share (see step 2). `compose up`
+REM builds the image on first run only (~2.5 GB of weights baked in).
+if "!S_VLLM!"=="healthy" if not defined PARAKEET_STARTED (
+    echo   [!TIME!]  LLM ready - starting Parakeet speech-to-text...
+    docker compose -f docker-compose-local.yaml up -d parakeet-stt
+    if errorlevel 1 (
+        echo [ERROR] Failed to start parakeet-stt. See output above.
+        pause
+        exit /b 1
+    )
+    set "PARAKEET_STARTED=1"
+)
 call :get_health embeddings
 set "S_EMB=!RESULT!"
 call :get_health kokoro
 set "S_KOK=!RESULT!"
-call :get_health speaches
-set "S_SPE=!RESULT!"
-echo   [!TIME!]  LLM=!S_VLLM!  Embeddings=!S_EMB!  TTS=!S_KOK!  STT=!S_SPE!
-if "!S_VLLM!!S_EMB!!S_KOK!!S_SPE!"=="healthyhealthyhealthyhealthy" goto models_ready
+call :get_health parakeet-stt
+set "S_STT=!RESULT!"
+echo   [!TIME!]  LLM=!S_VLLM!  Embeddings=!S_EMB!  TTS=!S_KOK!  STT=!S_STT!
+if "!S_VLLM!!S_EMB!!S_KOK!!S_STT!"=="healthyhealthyhealthyhealthy" goto models_ready
 if !model_attempts! geq 120 goto models_timeout
 timeout /t 10 /nobreak >nul
 goto wait_models
@@ -185,7 +192,7 @@ goto wait_models
 echo.
 echo [WARN] Not all models became healthy within ~20 minutes.
 echo        Inspect logs with:
-echo            docker compose -f docker-compose-local.yaml logs -f vllm embeddings kokoro speaches
+echo            docker compose -f docker-compose-local.yaml logs -f vllm embeddings kokoro parakeet-stt
 goto stack_running
 
 :models_ready
